@@ -10,6 +10,7 @@ import {
   UserButton,
   useUser,
 } from "@clerk/nextjs";
+import { playSetCompletionSound } from "@/lib/gamification";
 
 const ROTATING_PHRASES = [
   "Precision Growth.",
@@ -827,6 +828,241 @@ function ComparisonShowcase() {
   );
 }
 
+function GamificationShowcase() {
+  const [demoXP, setDemoXP] = useState(680);
+  const [demoCombo, setDemoCombo] = useState(3);
+  const [demoToasts, setDemoToasts] = useState<{ id: string; text: string }[]>([]);
+
+  const handleSimulateSet = () => {
+    try {
+      playSetCompletionSound();
+    } catch {
+      // Audio autoplay policy
+    }
+    setDemoXP((prev) => prev + 10);
+    setDemoCombo((prev) => prev + 1);
+    const id = `toast-${Date.now()}`;
+    setDemoToasts((prev) => [...prev, { id, text: `+10 XP` }]);
+    setTimeout(() => {
+      setDemoToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 1400);
+  };
+
+  const level = Math.floor(Math.sqrt(demoXP / 100));
+  const currentLevelXP = level * level * 100;
+  const nextLevelXP = (level + 1) * (level + 1) * 100;
+  const xpInLevel = demoXP - currentLevelXP;
+  const xpNeeded = nextLevelXP - currentLevelXP;
+  const progress = Math.min(1, xpInLevel / xpNeeded);
+
+  const demoBadges = [
+    { id: "sword", title: "First Blood", desc: "Completed first workout", unlocked: true },
+    { id: "flame", title: "On Fire", desc: "7-day streak maintained", unlocked: true },
+    { id: "bolt", title: "Centurion", desc: "100 total sets logged", unlocked: true },
+    { id: "crown", title: "Olympian", desc: "Reach Level 7 athlete", unlocked: false },
+  ];
+
+  return (
+    <section id="gamification" className="py-24 px-4 sm:px-8 max-w-7xl mx-auto z-10 relative">
+      <div className="text-center max-w-3xl mx-auto space-y-4 mb-16">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-amber-400/40 bg-amber-500/10 text-amber-300 text-xs font-black uppercase tracking-widest">
+          <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.003 0H9.497m5.003 0A4.5 4.5 0 0 0 18 9.75V4.5H6v5.25a4.5 4.5 0 0 0 3.497 4.5m4.006 0A2.25 2.25 0 0 1 12 16.5a2.25 2.25 0 0 1-1.5-.75" />
+          </svg>
+          <span>Progression Matrix</span>
+        </div>
+        <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
+          Train Like an RPG Hero.{" "}
+          <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-amber-200 bg-clip-text text-transparent">
+            Never Lose Motivation Again.
+          </span>
+        </h2>
+        <p className="text-slate-400 text-sm sm:text-base leading-relaxed">
+          Every completed set awards live XP, consecutive days ignite streak multipliers, and personal records trigger epic victory fanfares. Working out has never been this addictive.
+        </p>
+      </div>
+
+      {/* Interactive Live Demo Card & Feature Highlights */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
+        {/* Left: Interactive Simulated HUD Card */}
+        <div className="lg:col-span-6 relative">
+          <div className="relative rounded-3xl p-6 sm:p-8 bg-gradient-to-br from-amber-950/20 via-[#061226]/90 to-[#020817] border border-amber-400/30 shadow-[0_0_50px_rgba(245,158,11,0.15)] backdrop-blur-xl space-y-6 overflow-hidden">
+            <div aria-hidden className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-amber-400/60 to-transparent" />
+
+            {/* Simulated Live Toast */}
+            {demoToasts.map((t) => (
+              <div
+                key={t.id}
+                className="absolute top-4 right-4 z-20 animate-xp-float pointer-events-none px-3 py-1.5 rounded-xl bg-amber-500/25 border border-amber-400/50 text-amber-200 font-black text-xs shadow-lg backdrop-blur-md"
+              >
+                {t.text}
+              </div>
+            ))}
+
+            {/* Level & Title Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl border-2 border-amber-400 bg-gradient-to-br from-amber-500/30 to-orange-500/15 text-amber-300 font-black text-2xl shadow-[0_0_20px_rgba(245,158,11,0.3)]">
+                  {level}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h4 className="text-base font-black text-white">Gladiator</h4>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-[10px] font-black text-amber-300">
+                      Level {level}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-semibold mt-0.5">
+                    {demoXP} Total XP • {xpInLevel}/{xpNeeded} to Level {level + 1}
+                  </p>
+                </div>
+              </div>
+
+              {demoCombo >= 3 && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500/20 border border-orange-400/40 text-orange-300 animate-combo-pop">
+                  <svg className="h-3.5 w-3.5 text-orange-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" />
+                  </svg>
+                  <span className="text-xs font-black">{demoCombo}x Combo</span>
+                </div>
+              )}
+            </div>
+
+            {/* XP Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="h-3 w-full rounded-full bg-white/5 overflow-hidden border border-white/10 p-0.5">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-amber-300 transition-all duration-500 relative"
+                  style={{ width: `${progress * 100}%` }}
+                >
+                  <div className="absolute inset-0 animate-trophy-shimmer rounded-full" />
+                </div>
+              </div>
+              <div className="flex justify-between text-[10px] font-bold text-slate-400">
+                <span>Rank Tier {level}</span>
+                <span>{Math.round(progress * 100)}% Next Tier</span>
+              </div>
+            </div>
+
+            {/* Badges Preview */}
+            <div className="pt-2 border-t border-white/[0.08]">
+              <div className="flex items-center justify-between mb-3 text-xs font-bold text-slate-400">
+                <span>Recent Trophy Unlocks</span>
+                <Link href="/profile" className="text-cyan-400 hover:underline">
+                  View Trophy Room →
+                </Link>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {demoBadges.map((b, i) => (
+                  <div
+                    key={i}
+                    className={`flex flex-col items-center p-2.5 rounded-xl border text-center transition-all ${
+                      b.unlocked
+                        ? "bg-amber-500/10 border-amber-400/30 text-amber-200"
+                        : "bg-white/[0.02] border-white/5 text-slate-500 opacity-50"
+                    }`}
+                  >
+                    <div className="h-5 w-5 mb-1 flex items-center justify-center">
+                      {b.id === "sword" && <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M14.25 9.75 16.5 12l5.25-5.25m-6 3 3-3m-6 3-6 6a2.25 2.25 0 0 1-3.182 0l-.318-.318a2.25 2.25 0 0 1 0-3.182l6-6m3.5 6.5-3.5-3.5" /></svg>}
+                      {b.id === "flame" && <svg className="h-4 w-4 text-orange-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" /></svg>}
+                      {b.id === "bolt" && <svg className="h-4 w-4 text-teal-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" /></svg>}
+                      {b.id === "crown" && <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.003 0H9.497m5.003 0A4.5 4.5 0 0 0 18 9.75V4.5H6v5.25a4.5 4.5 0 0 0 3.497 4.5m4.006 0A2.25 2.25 0 0 1 12 16.5a2.25 2.25 0 0 1-1.5-.75" /></svg>}
+                    </div>
+                    <span className="text-[10px] font-extrabold text-white truncate max-w-full">{b.title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Interactive Try Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleSimulateSet}
+                className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-amber-400 text-white font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-amber-500/25 hover:from-amber-400 hover:to-orange-400 transition-all active:scale-[0.98] button-press flex items-center justify-center gap-2"
+              >
+                <svg className="h-4 w-4 text-amber-200" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+                </svg>
+                <span>Complete Set (+10 XP)</span>
+                <span className="text-[10px] opacity-80">(Click to Test Live Chime & XP!)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: 4 Pillar Features */}
+        <div className="lg:col-span-6 space-y-4">
+          {[
+            {
+              id: "shield",
+              title: "10 Distinct Athlete Tiers",
+              desc: "From Recruit to Immortal, every set logged accumulates real XP that scales your rank. Unlock titles, badges, and bragging rights.",
+              tag: "Quadratic Progression",
+            },
+            {
+              id: "flame",
+              title: "Streak Multipliers & Combos",
+              desc: "Train consecutively to activate the daily streak multiplier. Hit reps in rhythm to unleash live workout combo multipliers.",
+              tag: "Daily compounding",
+            },
+            {
+              id: "trophy",
+              title: "The 25+ Badge Trophy Room",
+              desc: "Hunt down achievements across volume, PR milestones, night owl sessions, and endurance feats. Displayed in your personal player card.",
+              tag: "Persistent hall of fame",
+            },
+            {
+              id: "target",
+              title: "Weekly Quests & Bounties",
+              desc: "Every Monday brings a fresh challenge tailored to your goals. Complete the weekly objective to pocket a massive +150 XP bonus.",
+              tag: "Refreshes every Monday",
+            },
+          ].map((item, i) => (
+            <div
+              key={i}
+              className="p-5 rounded-2xl bg-white/[0.02] border border-white/[0.06] hover:border-amber-400/30 hover:bg-white/[0.04] transition-all flex items-start gap-4 group"
+            >
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-400/20 text-amber-300 shrink-0">
+                {item.id === "shield" && <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>}
+                {item.id === "flame" && <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" /></svg>}
+                {item.id === "trophy" && <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.003 0H9.497m5.003 0A4.5 4.5 0 0 0 18 9.75V4.5H6v5.25a4.5 4.5 0 0 0 3.497 4.5m4.006 0A2.25 2.25 0 0 1 12 16.5a2.25 2.25 0 0 1-1.5-.75" /></svg>}
+                {item.id === "target" && <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-3.75a5.25 5.25 0 1 0 0-10.5 5.25 5.25 0 0 0 0 10.5Zm0-2.25a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /></svg>}
+              </div>
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-extrabold text-white">{item.title}</h4>
+                  <span className="text-[9px] font-black uppercase text-amber-400/90 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 shrink-0">
+                    {item.tag}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+
+          <div className="pt-2 flex items-center gap-4">
+            <Link
+              href="/profile"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/[0.05] border border-white/10 hover:border-amber-400/40 text-xs font-bold text-white hover:bg-white/[0.08] transition-all"
+            >
+              <span>Explore Trophy Room</span>
+              <span className="text-amber-400">→</span>
+            </Link>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 text-xs font-bold text-cyan-400 hover:underline"
+            >
+              <span>Launch Studio Dashboard</span>
+              <span>→</span>
+            </Link>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function LandingPage() {
   const { isSignedIn, isLoaded } = useUser();
   const router = useRouter();
@@ -917,9 +1153,13 @@ export default function LandingPage() {
             <a href="#ai-studio" className="hover:text-cyan-300 transition-colors">
               AI Studio
             </a>
-            <a href="#telemetry" className="hover:text-cyan-300 transition-colors">
-              Telemetry
+            <a href="#gamification" className="hover:text-cyan-300 transition-colors flex items-center gap-1">
+              <span>Trophies & XP</span>
+              <span className="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">NEW</span>
             </a>
+            <Link href="/profile" className="hover:text-cyan-300 transition-colors">
+              Trophy Room
+            </Link>
             <Link href="/history" className="hover:text-cyan-300 transition-colors">
               Workout History
             </Link>
@@ -1703,6 +1943,11 @@ export default function LandingPage() {
           <InteractiveDeepDive />
         </ScrollReveal>
 
+        {/* ── Gamified Progression & Trophy Room Showcase ── */}
+        <ScrollReveal animation="fade-up">
+          <GamificationShowcase />
+        </ScrollReveal>
+
         {/* ═══════════════════════════════════════════════════════════════
             CALL TO ACTION BANNER (Bottom)
             ═══════════════════════════════════════════════════════════════ */}
@@ -1765,6 +2010,9 @@ export default function LandingPage() {
             </Link>
             <Link href="/history" className="hover:text-white transition-colors">
               History
+            </Link>
+            <Link href="/profile" className="hover:text-amber-300 transition-colors">
+              Trophy Room
             </Link>
             <a href="#features" className="hover:text-white transition-colors">
               Features

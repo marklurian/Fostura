@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   SignInButton,
@@ -21,6 +22,32 @@ import {
   EquipmentCategory,
   ExerciseLibraryItem,
 } from "../data/exercises";
+import {
+  getDefaultStats,
+  loadGamificationStats,
+  saveGamificationStats,
+  recordWorkoutCompletion,
+  awardMiscXP,
+  levelFromXP,
+  titleForLevel,
+  colorForLevel,
+  xpProgressInLevel,
+  xpForLevel,
+  getCurrentStreakStatus,
+  getActiveChallenge,
+  generateConfettiParticles,
+  playSetCompletionSound,
+  playLevelUpFanfare,
+  ACHIEVEMENTS,
+  XP_REWARDS,
+  type GamificationStats,
+  type GamificationResult,
+  type XPGainEvent,
+} from "@/lib/gamification";
+import { AchievementIcon } from "@/app/profile/page";
+import { TrophyRoomTab } from "./TrophyRoomTab";
+import { AnatomicalHumanBody } from "./AnatomicalHumanBody";
+import { LogDayActivityModal } from "./LogDayActivityModal";
 
 /* ═══════════════════════════════════════════════════════════════
    Types
@@ -207,6 +234,49 @@ function loadUserTemplates(): WorkoutTemplate[] {
 
 function saveUserTemplates(t: WorkoutTemplate[]) {
   localStorage.setItem("forma-templates", JSON.stringify(t));
+}
+
+function loadAiPlan(): WorkoutDay[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("forma-ai-plan");
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAiPlan(p: WorkoutDay[] | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (p) {
+      localStorage.setItem("forma-ai-plan", JSON.stringify(p));
+    } else {
+      localStorage.removeItem("forma-ai-plan");
+    }
+  } catch {}
+}
+
+function isMainPlanMarked(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem("forma-main-plan-active") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setMainPlanMarked(active: boolean) {
+  if (typeof window === "undefined") return;
+  try {
+    if (active) {
+      localStorage.setItem("forma-main-plan-active", "true");
+    } else {
+      localStorage.removeItem("forma-main-plan-active");
+    }
+  } catch {}
 }
 
 function loadUserMetrics(): MetricEntry[] {
@@ -412,11 +482,30 @@ function LiveDateTime({ compact = false }: { compact?: boolean }) {
 /* ═══════════════════════════════════════════════════════════════
    Fitness Goal Interactive Selector Card
    ═══════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════
+   Target Fitness Goal Selector (Clean, Minimalist Cards)
+   ═══════════════════════════════════════════════════════════════ */
 const GOAL_OPTIONS = [
-  { id: "Build Muscle", title: "Build Muscle", sub: "Hypertrophy & Mass" },
-  { id: "Strength", title: "Strength & Power", sub: "Heavy Compounds" },
-  { id: "Get Lean", title: "Get Lean & Cut", sub: "Fat Loss & Definition" },
-  { id: "Lose Weight", title: "Lose Weight", sub: "High Calorie Burn" },
+  {
+    id: "Build Muscle",
+    title: "Build Muscle",
+    sub: "Hypertrophy & progressive overload",
+  },
+  {
+    id: "Strength",
+    title: "Strength & Power",
+    sub: "Heavy compound force output",
+  },
+  {
+    id: "Get Lean",
+    title: "Get Lean & Cut",
+    sub: "Caloric deficit & definition",
+  },
+  {
+    id: "Lose Weight",
+    title: "Lose Weight",
+    sub: "High metabolic conditioning",
+  },
 ];
 
 function FitnessGoalSelector({
@@ -427,11 +516,18 @@ function FitnessGoalSelector({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400 block">
-        1. Target Goal
-      </label>
-      <div className="grid grid-cols-2 gap-2">
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          1. Target Goal
+        </label>
+        {value && (
+          <span className="text-[10px] font-mono font-bold text-cyan-300">
+            {GOAL_OPTIONS.find((g) => g.id === value)?.title}
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {GOAL_OPTIONS.map((g) => {
           const selected = value === g.id;
           return (
@@ -439,25 +535,29 @@ function FitnessGoalSelector({
               key={g.id}
               type="button"
               onClick={() => onChange(g.id)}
-              className={`text-left p-3 rounded-2xl border card-hover-lift button-press transition-all ${
+              className={`text-left p-3.5 rounded-2xl border transition-all duration-200 button-press flex items-center justify-between gap-3 ${
                 selected
-                  ? "border-sky-400/60 bg-gradient-to-r from-sky-600/30 to-cyan-600/30 shadow-md shadow-sky-500/20 ring-1 ring-sky-400/50"
-                  : "liquid-glass border-white/10 hover:border-sky-400/30 hover:bg-white/[0.04]"
+                  ? "border-cyan-400/60 bg-gradient-to-r from-cyan-500/15 via-sky-500/10 to-transparent shadow-[0_0_15px_rgba(56,189,248,0.15)] ring-1 ring-cyan-400/40"
+                  : "border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/15"
               }`}
             >
-              <div className="flex items-center justify-between">
-                <span className={`text-xs font-extrabold ${selected ? "text-white" : "text-slate-200"}`}>
+              <div className="min-w-0 flex-1">
+                <p className={`text-xs font-bold leading-snug truncate ${selected ? "text-white" : "text-slate-200"}`}>
                   {g.title}
-                </span>
-                {selected && (
-                  <span className="flex h-4 w-4 items-center justify-center rounded-full bg-cyan-400 text-slate-950 text-[10px] font-black animate-check-pop">
-                    ✓
-                  </span>
-                )}
+                </p>
+                <p className={`text-[10px] leading-snug truncate mt-0.5 ${selected ? "text-cyan-200/90" : "text-slate-400"}`}>
+                  {g.sub}
+                </p>
               </div>
-              <p className={`text-[10px] mt-0.5 ${selected ? "text-sky-200 font-medium" : "text-slate-400"}`}>
-                {g.sub}
-              </p>
+              <div
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all ${
+                  selected
+                    ? "border-cyan-400 bg-cyan-400 text-slate-950 shadow-sm shadow-cyan-400/40"
+                    : "border-white/20 bg-white/[0.03]"
+                }`}
+              >
+                {selected && <div className="h-1.5 w-1.5 rounded-full bg-slate-950" />}
+              </div>
             </button>
           );
         })}
@@ -467,12 +567,12 @@ function FitnessGoalSelector({
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Experience Level Interactive Selector
+   Sleek Segmented Experience Level Control (1 Unified Bar)
    ═══════════════════════════════════════════════════════════════ */
 const EXPERIENCE_OPTIONS = [
-  { id: "Beginner", title: "Beginner", sub: "0–1 yrs • Form Base" },
-  { id: "Intermediate", title: "Intermediate", sub: "1–3 yrs • Overload" },
-  { id: "Advanced", title: "Advanced", sub: "3+ yrs • High Volume" },
+  { id: "Beginner", title: "Beginner", tenure: "0–1 yrs" },
+  { id: "Intermediate", title: "Intermediate", tenure: "1–3 yrs" },
+  { id: "Advanced", title: "Advanced", tenure: "3+ yrs" },
 ];
 
 function ExperienceLevelSelector({
@@ -483,11 +583,18 @@ function ExperienceLevelSelector({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400 block">
-        2. Experience Level
-      </label>
-      <div className="grid grid-cols-3 gap-2">
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          2. Experience Level
+        </label>
+        {value && (
+          <span className="text-[10px] font-mono font-bold text-cyan-300">
+            {EXPERIENCE_OPTIONS.find((e) => e.id === value)?.tenure}
+          </span>
+        )}
+      </div>
+      <div className="p-1 rounded-2xl bg-white/[0.03] border border-white/[0.06] grid grid-cols-3 gap-1">
         {EXPERIENCE_OPTIONS.map((exp) => {
           const selected = value === exp.id;
           return (
@@ -495,25 +602,16 @@ function ExperienceLevelSelector({
               key={exp.id}
               type="button"
               onClick={() => onChange(exp.id)}
-              className={`text-left p-2.5 rounded-2xl border card-hover-lift button-press transition-all ${
+              className={`py-2 px-2 rounded-xl text-center transition-all duration-200 button-press ${
                 selected
-                  ? "border-cyan-400/60 bg-gradient-to-r from-sky-600/30 to-cyan-600/30 shadow-md shadow-cyan-500/20 ring-1 ring-cyan-400/50"
-                  : "liquid-glass border-white/10 hover:border-cyan-400/30 hover:bg-white/[0.04]"
+                  ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white font-bold shadow-md shadow-cyan-500/25"
+                  : "text-slate-400 hover:text-white hover:bg-white/[0.03] font-medium"
               }`}
             >
-              <div className="flex items-center justify-between">
-                <span className={`text-xs font-bold ${selected ? "text-white" : "text-slate-200"}`}>
-                  {exp.title}
-                </span>
-                {selected && (
-                  <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-cyan-400 text-slate-950 text-[9px] font-black animate-check-pop">
-                    ✓
-                  </span>
-                )}
-              </div>
-              <p className={`text-[9px] mt-0.5 line-clamp-2 ${selected ? "text-cyan-200 font-medium" : "text-slate-400"}`}>
-                {exp.sub}
-              </p>
+              <span className="text-xs block leading-tight">{exp.title}</span>
+              <span className={`text-[9px] block leading-tight ${selected ? "text-cyan-100/90" : "text-slate-400"}`}>
+                {exp.tenure}
+              </span>
             </button>
           );
         })}
@@ -523,27 +621,117 @@ function ExperienceLevelSelector({
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   Equipment Mix & Multi-Select Custom Builder
+   Routine Split Selector (Push / Pull / Legs is Default)
+   ═══════════════════════════════════════════════════════════════ */
+const SPLIT_OPTIONS = [
+  {
+    id: "Push / Pull / Legs (PPL)",
+    name: "Push / Pull / Legs",
+    badge: "Default",
+    code: "PPL",
+    subtitle: "Day 1 Push • Day 2 Pull • Day 3 Legs",
+  },
+  {
+    id: "Upper / Lower / Full",
+    name: "Upper / Lower",
+    badge: null,
+    code: "UL",
+    subtitle: "Day 1 Upper • Day 2 Lower • Day 3 Full",
+  },
+  {
+    id: "Full Body 3x",
+    name: "Full Body 3x",
+    badge: null,
+    code: "FB",
+    subtitle: "3 days compound full-body frequency",
+  },
+  {
+    id: "Custom / Arnold Split",
+    name: "Custom / Arnold",
+    badge: null,
+    code: "CUSTOM",
+    subtitle: "Chest & Back • Shoulders & Arms • Legs",
+  },
+];
+
+function RoutineSplitSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+          3. Program Split Structure
+        </label>
+        <span className="text-[10px] font-mono font-bold text-cyan-300">
+          {SPLIT_OPTIONS.find((s) => s.id === value)?.code || "PPL"}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {SPLIT_OPTIONS.map((split) => {
+          const selected = value === split.id;
+          return (
+            <button
+              key={split.id}
+              type="button"
+              onClick={() => onChange(split.id)}
+              className={`relative flex items-start gap-2.5 p-3 rounded-2xl border text-left transition-all duration-200 button-press ${
+                selected
+                  ? "border-cyan-400/60 bg-gradient-to-r from-cyan-500/15 via-sky-500/10 to-transparent shadow-[0_0_15px_rgba(56,189,248,0.15)] ring-1 ring-cyan-400/40"
+                  : "border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] hover:border-white/15"
+              }`}
+            >
+              <div
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-[10px] font-mono font-bold transition-colors ${
+                  selected
+                    ? "bg-cyan-400 text-slate-950 shadow-md shadow-cyan-400/30"
+                    : "bg-white/[0.05] text-slate-400"
+                }`}
+              >
+                {split.code}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className={`text-xs font-bold leading-snug truncate ${selected ? "text-white" : "text-slate-200"}`}>
+                    {split.name}
+                  </p>
+                  {split.badge && (
+                    <span className="text-[8px] uppercase tracking-wider font-mono font-bold px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                      {split.badge}
+                    </span>
+                  )}
+                </div>
+                <p className={`text-[10px] leading-snug truncate mt-0.5 ${selected ? "text-cyan-200/90" : "text-slate-400"}`}>
+                  {split.subtitle}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   User-Controlled Equipment Selector (Direct Choice, No Presets)
    ═══════════════════════════════════════════════════════════════ */
 const EQUIPMENT_ITEMS = [
   { id: "Barbell", label: "Barbell & Plates" },
-  { id: "Bodyweight", label: "Bodyweight / Calisthenics" },
   { id: "Dumbbells", label: "Dumbbells" },
-  { id: "Pull-up Bar", label: "Pull-up Bar / Dips" },
-  { id: "Cable Machine", label: "Cables & Pulleys" },
-  { id: "Gym Machines", label: "Gym Machines" },
-  { id: "Kettlebell", label: "Kettlebells" },
   { id: "Bench", label: "Adjustable Bench" },
   { id: "Squat Rack", label: "Squat / Power Rack" },
-  { id: "Resistance Bands", label: "Resistance Bands" },
-];
-
-const EQUIPMENT_PRESETS = [
-  { label: "Barbell + Bodyweight", items: ["Barbell", "Bodyweight", "Pull-up Bar"] },
-  { label: "Dumbbells + Bodyweight", items: ["Dumbbells", "Bodyweight", "Pull-up Bar"] },
-  { label: "Barbell + Dumbbells + Bodyweight", items: ["Barbell", "Dumbbells", "Bodyweight", "Pull-up Bar", "Bench"] },
-  { label: "Full Commercial Gym", items: ["Barbell", "Dumbbells", "Bodyweight", "Cable Machine", "Gym Machines", "Pull-up Bar", "Bench", "Squat Rack"] },
-  { label: "Bodyweight Only", items: ["Bodyweight", "Pull-up Bar"] },
+  { id: "Cable Machine", label: "Cables & Pulleys" },
+  { id: "Gym Machines", label: "Gym Machines" },
+  { id: "Pull-up Bar", label: "Pull-up Bar / Dips" },
+  { id: "Kettlebell", label: "Kettlebells" },
+  { id: "Resistance Bands", label: "Bands" },
+  { id: "Bodyweight", label: "Calisthenics / Bodyweight" },
 ];
 
 function EquipmentMixSelector({
@@ -553,7 +741,6 @@ function EquipmentMixSelector({
   value: string;
   onChange: (v: string) => void;
 }) {
-  // Parse comma-separated value into array
   const selectedItems = useMemo(() => {
     if (!value) return [];
     return value.split(",").map((s) => s.trim()).filter(Boolean);
@@ -569,94 +756,77 @@ function EquipmentMixSelector({
     onChange(updated.join(", "));
   }
 
-  function applyPreset(items: string[]) {
-    onChange(items.join(", "));
+  function selectAll() {
+    onChange(EQUIPMENT_ITEMS.map((item) => item.id).join(", "));
   }
+
+  function clearAll() {
+    onChange("");
+  }
+
+  const allSelected = selectedItems.length === EQUIPMENT_ITEMS.length;
 
   return (
     <div className="space-y-2.5">
       <div className="flex items-center justify-between">
-        <label className="text-[10px] font-semibold uppercase tracking-[0.15em] text-slate-400">
-          3. Available Equipment (Mix & Multi-Select)
-        </label>
-        <span className="text-[10px] font-semibold text-cyan-300">
-          {selectedItems.length > 0 ? `${selectedItems.length} selected` : "Select options"}
-        </span>
+        <div>
+          <label className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+            4. Available Equipment
+          </label>
+          <p className="text-[10px] text-slate-500">Choose all equipment accessible to you</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {!allSelected ? (
+            <button
+              type="button"
+              onClick={selectAll}
+              className="text-[10px] font-semibold text-slate-400 hover:text-cyan-300 transition-colors button-press"
+            >
+              Select all
+            </button>
+          ) : null}
+          {selectedItems.length > 0 && (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="text-[10px] font-semibold text-slate-400 hover:text-rose-300 transition-colors button-press"
+            >
+              Clear
+            </button>
+          )}
+          <span className="text-[10px] font-mono font-bold text-cyan-300 ml-1">
+            {selectedItems.length}/{EQUIPMENT_ITEMS.length} selected
+          </span>
+        </div>
       </div>
 
-      {/* Quick Mix Presets */}
-      <div>
-        <p className="text-[9px] uppercase font-bold text-slate-400 mb-1.5">Quick Presets</p>
-        <div className="flex flex-wrap gap-1.5">
-          {EQUIPMENT_PRESETS.map((preset) => {
-            const isMatch =
-              preset.items.length === selectedItems.length &&
-              preset.items.every((it) => selectedItems.includes(it));
-            return (
-              <button
-                key={preset.label}
-                type="button"
-                onClick={() => applyPreset(preset.items)}
-                className={`px-2.5 py-1 text-[10px] font-bold rounded-xl card-hover-lift button-press transition-all ${
-                  isMatch
-                    ? "bg-gradient-to-r from-cyan-500 to-sky-500 text-white shadow-md shadow-cyan-500/20"
-                    : "liquid-pill text-slate-300 hover:text-white hover:border-sky-400/40"
+      {/* Direct Interactive Equipment Chips */}
+      <div className="grid grid-cols-2 gap-1.5">
+        {EQUIPMENT_ITEMS.map((item) => {
+          const isSelected = selectedItems.includes(item.id);
+          return (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => toggleItem(item.id)}
+              className={`px-3 py-2 rounded-xl text-xs font-medium transition-all duration-150 flex items-center justify-between button-press ${
+                isSelected
+                  ? "bg-cyan-500/20 border border-cyan-400/60 text-cyan-100 shadow-sm shadow-cyan-500/10 ring-1 ring-cyan-400/20"
+                  : "bg-white/[0.025] border border-white/[0.06] text-slate-300 hover:text-white hover:bg-white/[0.06]"
+              }`}
+            >
+              <span className="truncate">{item.label}</span>
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold ${
+                  isSelected ? "bg-cyan-400 text-slate-950" : "bg-white/[0.06] text-slate-500"
                 }`}
               >
-                {preset.label}
-              </button>
-            );
-          })}
-        </div>
+                {isSelected ? "✓" : "+"}
+              </span>
+            </button>
+          );
+        })}
       </div>
-
-      {/* Interactive Equipment Multi-Select Chips */}
-      <div>
-        <p className="text-[9px] uppercase font-bold text-slate-400 mb-1.5">Customize Your Equipment Mix</p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {EQUIPMENT_ITEMS.map((item) => {
-            const isSelected = selectedItems.includes(item.id);
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => toggleItem(item.id)}
-                className={`flex items-center justify-between px-3 py-2 rounded-xl text-left text-xs font-semibold border card-hover-lift button-press transition-all ${
-                  isSelected
-                    ? "border-sky-400/60 bg-sky-950/40 text-white shadow-sm shadow-sky-500/20 ring-1 ring-sky-400/40"
-                    : "liquid-glass border-white/10 text-slate-300 hover:text-white hover:border-white/20"
-                }`}
-              >
-                <span className="truncate">{item.label}</span>
-                <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-md text-[9px] font-black transition-all ${
-                    isSelected ? "bg-cyan-400 text-slate-950 animate-check-pop" : "border border-white/20 text-transparent"
-                  }`}
-                >
-                  ✓
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Active Selection Summary */}
-      {selectedItems.length > 0 && (
-        <div className="liquid-glass rounded-xl px-3 py-2 border-cyan-500/20 bg-cyan-950/15 flex items-center justify-between text-xs">
-          <div className="min-w-0 pr-2">
-            <span className="text-[9px] uppercase font-bold text-cyan-300 block">Active Mix</span>
-            <p className="font-semibold text-white truncate text-[11px]">{selectedItems.join(", ")}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onChange("")}
-            className="text-[10px] text-slate-400 hover:text-red-400 transition-colors shrink-0 underline"
-          >
-            Clear
-          </button>
-        </div>
-      )}
     </div>
   );
 }
@@ -1136,7 +1306,9 @@ function AiSparkTooltip({
         title="AI Progression Cue"
         aria-label={`AI suggestion for ${exerciseName}`}
       >
-        <span className="text-xs">✨</span>
+        <svg className="h-3.5 w-3.5 text-cyan-300" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+        </svg>
       </button>
 
       {/* Floating Glassmorphic Tooltip */}
@@ -1147,7 +1319,9 @@ function AiSparkTooltip({
         >
           <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-white/[0.08]">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-cyan-300">✨</span>
+              <svg className="h-3 w-3 text-cyan-300" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+              </svg>
               <span className="text-[10px] font-black uppercase tracking-wider text-white">
                 Coach Fostura Suggestion
               </span>
@@ -1250,34 +1424,70 @@ function AiCoachDrawer({
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const renderPromptIcon = (iconKey: string, className = "h-4 w-4") => {
+    switch (iconKey) {
+      case "salad":
+        return (
+          <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m-7-9c0 3.866 3.134 7 7 7s7-3.134 7-7H5Z" />
+          </svg>
+        );
+      case "barbell":
+        return (
+          <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h1.5v4H3v-4Zm3-2h2v8H6V8Zm2 3h8v2H8v-2Zm8-3h2v8h-2V8Zm3 2h1.5v4H19v-4Z" />
+          </svg>
+        );
+      case "nutrition":
+        return (
+          <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z" />
+          </svg>
+        );
+      case "clock":
+        return (
+          <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+        );
+      case "bolt":
+      default:
+        return (
+          <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+          </svg>
+        );
+    }
+  };
+
   const PROMPT_TEMPLATES = [
     {
       id: "p-meals",
-      icon: "🥗",
+      icon: "salad",
       title: "Quick High-Protein Meals",
       prompt: "Suggest 3 easy high-protein meals I can prep in under 15 minutes",
     },
     {
       id: "p-bench",
-      icon: "🏋️",
+      icon: "barbell",
       title: "Progress Bench Press",
       prompt: "How should I progress my Bench Press weight and break a plateau?",
     },
     {
       id: "p-nutrition",
-      icon: "🍗",
+      icon: "nutrition",
       title: "Pre & Post Workout Fuel",
       prompt: "What should I eat before and after a workout for optimal muscle gain?",
     },
     {
       id: "p-rest",
-      icon: "⏱️",
+      icon: "clock",
       title: "Optimal Rest Intervals",
       prompt: "How long should I rest between sets for strength vs hypertrophy?",
     },
     {
       id: "p-warmup",
-      icon: "⚡",
+      icon: "bolt",
       title: "Full Body Warmup",
       prompt: "Give me a quick 5-minute dynamic warmup before lifting heavy",
     },
@@ -1355,7 +1565,7 @@ function AiCoachDrawer({
       const fallbackCoachMsg: ChatMessage = {
         id: `c-${Date.now()}`,
         sender: "coach",
-        text: `⚠️ Coach Fostura encountered an error: ${errMsg}. Please ensure your internet connection is active and try again!`,
+        text: `Coach Fostura encountered an error: ${errMsg}. Please ensure your internet connection is active and try again!`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, fallbackCoachMsg]);
@@ -1379,9 +1589,9 @@ function AiCoachDrawer({
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-white/[0.08] bg-gradient-to-r from-sky-950/60 to-cyan-950/40 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-300 shadow-[0_0_15px_rgba(56,189,248,0.3)]">
-              <span className="text-lg">✨</span>
-              <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#040914]" />
+            <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-400 text-slate-950 font-black text-xs">
+              <span>AI</span>
+              <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-400 ring-2 ring-[#040914]" />
             </div>
             <div>
               <h3 className="text-sm font-extrabold text-white flex items-center gap-1.5">
@@ -1426,7 +1636,7 @@ function AiCoachDrawer({
           {messages.length === 1 && (
             <div className="space-y-2 pt-2 animate-fade-in">
               <p className="text-[11px] font-bold text-cyan-300 px-1 uppercase tracking-wider">
-                💡 Tap a topic to get started:
+                Tap a topic to get started:
               </p>
               <div className="grid grid-cols-1 gap-2">
                 {PROMPT_TEMPLATES.slice(0, 3).map((tmpl) => (
@@ -1438,7 +1648,7 @@ function AiCoachDrawer({
                   >
                     <div className="flex items-center gap-3 min-w-0 pr-2">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-base shadow-sm">
-                        {tmpl.icon}
+                        {renderPromptIcon(tmpl.icon, "h-4 w-4 text-cyan-300")}
                       </div>
                       <div className="min-w-0">
                         <p className="text-xs font-black text-white group-hover:text-cyan-200 transition-colors truncate">
@@ -1473,7 +1683,9 @@ function AiCoachDrawer({
         <div className="px-4 py-2.5 border-t border-white/[0.08] bg-[#030914]/95 space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-              <span>💡</span>
+              <svg className="h-3.5 w-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18v-5.25m0 0a6.01 6.01 0 0 0 1.5-.189m-1.5.189a6.01 6.01 0 0 1-1.5-.189m3.75 7.478a12.06 12.06 0 0 1-4.5 0m3.75 2.383a14.406 14.406 0 0 1-3 0M14.25 18v-.192c0-.983.658-1.823 1.508-2.316a7.5 7.5 0 1 0-7.516 0c.85.493 1.508 1.333 1.508 2.316V18" />
+              </svg>
               <span>Quick Prompt Templates</span>
             </span>
             <span className="text-[9px] text-slate-400">Swipe to browse →</span>
@@ -1488,7 +1700,7 @@ function AiCoachDrawer({
                 className="group flex items-center gap-2 rounded-xl border border-sky-400/40 bg-sky-950/80 hover:bg-sky-900/90 hover:border-cyan-300 px-3 py-1.5 text-left shrink-0 transition-all button-press shadow-md shadow-sky-950/50"
                 title={tmpl.prompt}
               >
-                <span className="text-sm">{tmpl.icon}</span>
+                {renderPromptIcon(tmpl.icon, "h-3.5 w-3.5 text-cyan-400")}
                 <span className="text-xs font-bold text-white group-hover:text-cyan-200 transition-colors whitespace-nowrap">
                   {tmpl.title}
                 </span>
@@ -1539,6 +1751,8 @@ function ActiveWorkout({
   elapsedSeconds,
   unit,
   onSetUnit,
+  onSetCompleted,
+  comboCounter = 0,
 }: {
   dayTitle: string;
   tracked: TrackedExercise[];
@@ -1548,6 +1762,8 @@ function ActiveWorkout({
   elapsedSeconds: number;
   unit: "lbs" | "kg";
   onSetUnit: (u: "lbs" | "kg") => void;
+  onSetCompleted?: (isComboBreak?: boolean) => void;
+  comboCounter?: number;
 }) {
   const [restTimer, setRestTimer] = useState<ActiveRestTimerState | null>(null);
   const [customRestSeconds, setCustomRestSeconds] = useState<number>(60);
@@ -1699,6 +1915,7 @@ function ActiveWorkout({
     updateSet(exIdx, si, "completed", isNowDone);
 
     if (isNowDone) {
+      onSetCompleted?.(false);
       // Check if this completes all sets of the exercise
       const allOtherSetsDone = tracked[exIdx].trackedSets.every((s, idx) =>
         idx === si ? true : s.completed
@@ -1725,6 +1942,7 @@ function ActiveWorkout({
         );
       }
     } else {
+      onSetCompleted?.(true);
       // If unchecking, stop active timer if related
       if (restTimer?.id === `set-rest-${exIdx}-${si}` || restTimer?.id === `inter-ex-${exIdx}`) {
         stopRestTimer();
@@ -1764,6 +1982,14 @@ function ActiveWorkout({
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {comboCounter >= 2 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gradient-to-r from-orange-500/20 to-amber-500/20 border border-orange-400/40 text-orange-300 animate-combo-pop shadow-[0_0_12px_rgba(251,146,60,0.25)]">
+                <svg className="h-3.5 w-3.5 text-orange-400 animate-pulse" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" />
+                </svg>
+                <span className="text-[11px] font-black">{comboCounter}x Combo!</span>
+              </div>
+            )}
             <UnitTogglePill unit={unit} onChange={onSetUnit} size="sm" />
             <div className="text-right">
               <p className="font-mono text-base font-bold tabular-nums text-slate-100">{formatTime(elapsedSeconds)}</p>
@@ -2160,12 +2386,16 @@ function WorkoutSummary({
   elapsedSeconds,
   unit,
   onClose,
+  gamificationResult,
+  gamificationStats,
 }: {
   dayTitle: string;
   trackedExercises: TrackedExercise[];
   elapsedSeconds: number;
   unit: "lbs" | "kg";
   onClose: () => void;
+  gamificationResult?: GamificationResult | null;
+  gamificationStats?: GamificationStats;
 }) {
   const { isLoaded, isSignedIn, user } = useUser();
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
@@ -2288,6 +2518,113 @@ function WorkoutSummary({
           )}
         </div>
 
+        {/* ── Gamification Victory Card ── */}
+        {gamificationResult && (
+          <div className="rounded-2xl border border-amber-400/40 bg-gradient-to-br from-amber-950/35 via-[#0a182d]/90 to-purple-950/35 p-4.5 space-y-3.5 shadow-[0_0_30px_rgba(245,158,11,0.15)] relative overflow-hidden animate-fade-in-up">
+            <div aria-hidden className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-400/10 via-transparent to-transparent pointer-events-none" />
+
+            {/* Level Up Celebration */}
+            {gamificationResult.leveledUp && (
+              <div className="rounded-xl border border-amber-400/60 bg-gradient-to-r from-amber-500/25 via-yellow-500/35 to-amber-500/25 p-3 text-center animate-level-up-glow shadow-[0_0_25px_rgba(245,158,11,0.4)]">
+                <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-amber-400/20 border border-amber-400/40 text-amber-300 mb-1">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+                  </svg>
+                </div>
+                <p className="text-sm font-black tracking-widest text-amber-200 uppercase animate-pulse">
+                  LEVEL UP!
+                </p>
+                <p className="text-xs font-bold text-white mt-0.5">
+                  You reached Level {gamificationResult.newLevel}: {titleForLevel(gamificationResult.newLevel)}!
+                </p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase tracking-[0.2em] text-amber-400">
+                  XP Earned This Session
+                </span>
+                <div className="flex items-baseline gap-2 mt-0.5">
+                  <span className="text-3xl font-black font-mono text-amber-300 drop-shadow-[0_0_12px_rgba(252,211,77,0.4)]">
+                    +{gamificationResult.totalXPGained}
+                  </span>
+                  <span className="text-xs font-bold text-amber-200/70">XP</span>
+                </div>
+              </div>
+
+              {gamificationStats && (
+                <div className="text-right">
+                  <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/20 text-xs font-black text-white">
+                    Level {levelFromXP(gamificationStats.totalXP)}
+                  </span>
+                  <p className="text-[10px] text-slate-400 font-bold mt-1">
+                    {titleForLevel(levelFromXP(gamificationStats.totalXP))}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* XP Breakdown Pills */}
+            <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
+              {gamificationResult.xpGains.map((gain, i) => (
+                <span
+                  key={i}
+                  className={`px-2 py-0.5 rounded-lg border ${
+                    gain.source === "prs"
+                      ? "bg-amber-500/20 border-amber-400/40 text-amber-300"
+                      : gain.source === "streak"
+                      ? "bg-orange-500/20 border-orange-400/40 text-orange-300"
+                      : gain.source === "combo"
+                      ? "bg-pink-500/20 border-pink-400/40 text-pink-300"
+                      : "bg-white/5 border-white/10 text-slate-300"
+                  }`}
+                >
+                  {gain.label}: +{gain.amount} XP
+                </span>
+              ))}
+            </div>
+
+            {/* Streak & Badges summary */}
+            <div className="flex items-center justify-between pt-2 border-t border-white/10 text-xs">
+              <div className="flex items-center gap-1.5">
+                <svg className="h-4 w-4 text-orange-400 animate-pulse" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.362 5.214A8.252 8.252 0 0 1 12 21 8.25 8.25 0 0 1 6.038 7.047 8.287 8.287 0 0 0 9 9.601a8.983 8.983 0 0 1 3.361-6.867 8.21 8.21 0 0 0 3 2.48Z" />
+                </svg>
+                <span className="font-extrabold text-orange-300">{gamificationResult.newStreak} Day Streak</span>
+              </div>
+              {gamificationResult.newAchievements.length > 0 && (
+                <div className="flex items-center gap-1.5 text-amber-300 font-extrabold">
+                  <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.504-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.004 0H9.496m5.004 0a5.25 5.25 0 0 0 5.25-5.25v-1.5h-15.5v1.5a5.25 5.25 0 0 0 5.25 5.25m10.25-5.25H21a2.25 2.25 0 0 0 2.25-2.25v-.75a2.25 2.25 0 0 0-2.25-2.25h-1.5M4.5 9H3a2.25 2.25 0 0 0-2.25 2.25v.75A2.25 2.25 0 0 0 3 14.25h1.5" />
+                  </svg>
+                  <span>{gamificationResult.newAchievements.length} New Badge{gamificationResult.newAchievements.length > 1 ? "s" : ""}!</span>
+                </div>
+              )}
+            </div>
+
+            {/* New Unlocked Badges Showcase */}
+            {gamificationResult.newAchievements.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                {gamificationResult.newAchievements.map((ach) => (
+                  <div
+                    key={ach.id}
+                    className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/15 border border-amber-400/50 animate-badge-unlock shadow-[0_0_15px_rgba(245,158,11,0.25)]"
+                  >
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-400/20 text-amber-300">
+                      <AchievementIcon icon={ach.icon} className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-white truncate">{ach.title}</p>
+                      <p className="text-[9px] text-amber-200/80 truncate">{ach.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── 1. Raw Stats Grid (Appears immediately) ── */}
         <div className="grid grid-cols-2 gap-2.5">
           {stats.map((s, i) => (
@@ -2307,7 +2644,9 @@ function WorkoutSummary({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-300 text-xs shadow-[0_0_8px_rgba(56,189,248,0.3)]">
-                  ✨
+                  <svg className="h-3.5 w-3.5 text-cyan-300" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567 16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z" />
+                  </svg>
                 </span>
                 <h3 className="text-xs font-black uppercase tracking-wider text-white">
                   Coach Fostura AI Debrief
@@ -2326,11 +2665,21 @@ function WorkoutSummary({
 
             <div className="grid grid-cols-2 gap-2 pt-1 border-t border-white/[0.06] text-[10px]">
               <div className="rounded-xl bg-white/[0.03] p-2.5">
-                <span className="font-bold text-sky-400 block">🔋 Recovery Window</span>
+                <span className="font-bold text-sky-400 flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 text-sky-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 10.5h.75v3H21v-3ZM3.75 8.25h15a1.5 1.5 0 0 1 1.5 1.5v4.5a1.5 1.5 0 0 1-1.5 1.5h-15a1.5 1.5 0 0 1-1.5-1.5v-4.5a1.5 1.5 0 0 1 1.5-1.5Z" />
+                  </svg>
+                  <span>Recovery Window</span>
+                </span>
                 <span className="text-slate-300 mt-0.5 block">Allow 48h before training primary movers again</span>
               </div>
               <div className="rounded-xl bg-white/[0.03] p-2.5">
-                <span className="font-bold text-teal-300 block">🥩 Fuel Target</span>
+                <span className="font-bold text-teal-300 flex items-center gap-1.5">
+                  <svg className="h-3.5 w-3.5 text-teal-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m-7-9c0 3.866 3.134 7 7 7s7-3.134 7-7H5Z" />
+                  </svg>
+                  <span>Fuel Target</span>
+                </span>
                 <span className="text-slate-300 mt-0.5 block">Consume 25–35g protein within 90 minutes</span>
               </div>
             </div>
@@ -2986,9 +3335,111 @@ function MetricsChart({
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   BMI Calculator Component (Independent Height & Weight Unit Selection)
+   Interactive Conversational BMI Calculator & Baseline Tracker
    ═══════════════════════════════════════════════════════════════ */
+interface SavedBmiData {
+  bmi: number;
+  category: string;
+  color: string;
+  idealRange: string;
+  heightFormatted: string;
+  weightFormatted: string;
+  feet: number;
+  inches: number;
+  heightCm: number;
+  weightLbs: number;
+  weightKg: number;
+  heightUnit: "ft_in" | "cm";
+  weightUnit: "lbs" | "kg";
+  savedAt: string;
+}
+
+function loadSavedBmi(): SavedBmiData | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem("forma-saved-bmi");
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function saveBmiToStorage(data: SavedBmiData | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (data) {
+      localStorage.setItem("forma-saved-bmi", JSON.stringify(data));
+    } else {
+      localStorage.removeItem("forma-saved-bmi");
+    }
+  } catch {}
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BmiIntroGraphic — Luxury Smart Scale Visual Asset
+   ═══════════════════════════════════════════════════════════════ */
+function BmiIntroGraphic({ isPing = false }: { isPing?: boolean }) {
+  return (
+    <div className="relative mx-auto w-48 h-48 flex items-center justify-center select-none py-1">
+      {/* Ambient background glow matching ocean theme */}
+      <div
+        className={`absolute inset-2 rounded-full bg-gradient-to-tr from-cyan-500/25 via-sky-500/20 to-teal-500/15 blur-2xl transition-all duration-300 pointer-events-none ${
+          isPing ? "scale-125 opacity-100 bg-cyan-400/50" : "animate-pulse"
+        }`}
+      />
+
+      {/* Floating container with brushed dark-glass bezel & subtle reflections */}
+      <div
+        className={`relative w-44 h-44 rounded-3xl overflow-hidden border transition-all duration-300 bg-gradient-to-b from-white/[0.06] to-[#040914] group ${
+          isPing
+            ? "scale-105 border-cyan-400/80 shadow-[0_0_40px_rgba(56,189,248,0.5)]"
+            : "border-white/[0.12] shadow-2xl shadow-cyan-500/20 animate-float"
+        }`}
+      >
+        <img
+          src="/smart-bmi-scale.jpg"
+          alt="Precision Smart Scale"
+          className={`w-full h-full object-cover transition-transform duration-700 ${
+            isPing ? "scale-110" : "group-hover:scale-105"
+          }`}
+        />
+        {/* Subtle glass reflection overlay */}
+        <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/10 via-transparent to-white/[0.08] pointer-events-none" />
+
+        {/* Biometric calibration pulse scan line overlay when clicked */}
+        {isPing && (
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-400/30 to-transparent animate-biometric-ping pointer-events-none" />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BmiCalculator() {
+  const [savedBmi, setSavedBmi] = useState<SavedBmiData | null>(null);
+  const [mode, setMode] = useState<"wizard" | "saved">("wizard");
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
+  const [justSaved, setJustSaved] = useState(false);
+
+  // Transition & Animation States
+  const [transitionState, setTransitionState] = useState<"idle" | "exiting">("idle");
+  const [direction, setDirection] = useState<"forward" | "backward">("forward");
+  const [isPing, setIsPing] = useState(false);
+
+  function goToStep(nextStep: 0 | 1 | 2 | 3, dir: "forward" | "backward" = "forward") {
+    setDirection(dir);
+    if (step === 0 && nextStep === 1) {
+      setIsPing(true);
+    }
+    setTransitionState("exiting");
+    setTimeout(() => {
+      setStep(nextStep);
+      setIsPing(false);
+      setTransitionState("idle");
+    }, 200);
+  }
+
   const [heightUnit, setHeightUnit] = useState<"ft_in" | "cm">("ft_in");
   const [weightUnit, setWeightUnit] = useState<"lbs" | "kg">("lbs");
 
@@ -2998,6 +3449,22 @@ function BmiCalculator() {
 
   const [weightLbs, setWeightLbs] = useState(170);
   const [weightKg, setWeightKg] = useState(77);
+
+  // Load saved baseline on mount
+  useEffect(() => {
+    const loaded = loadSavedBmi();
+    if (loaded) {
+      setSavedBmi(loaded);
+      setMode("saved");
+      setHeightUnit(loaded.heightUnit);
+      setWeightUnit(loaded.weightUnit);
+      setFeet(loaded.feet);
+      setInches(loaded.inches);
+      setHeightCm(loaded.heightCm);
+      setWeightLbs(loaded.weightLbs);
+      setWeightKg(loaded.weightKg);
+    }
+  }, []);
 
   // Bidirectional Height Unit Switch Handler
   function handleHeightUnitChange(nextUnit: "ft_in" | "cm") {
@@ -3029,22 +3496,28 @@ function BmiCalculator() {
     setWeightUnit(nextUnit);
   }
 
-  const { bmi, category, color, idealRange, progressRatio } = useMemo(() => {
+  const { bmi, category, color, idealRange, progressRatio, heightFormatted, weightFormatted, insight } = useMemo(() => {
     // Height in meters
     let heightM = 0;
+    let formattedHeight = "";
     if (heightUnit === "ft_in") {
       const totalInches = feet * 12 + inches;
       heightM = (totalInches * 2.54) / 100;
+      formattedHeight = `${feet} ft ${inches} in`;
     } else {
       heightM = heightCm / 100;
+      formattedHeight = `${heightCm} cm`;
     }
 
     // Weight in kg
     let weightInKg = 0;
+    let formattedWeight = "";
     if (weightUnit === "lbs") {
       weightInKg = weightLbs * 0.45359237;
+      formattedWeight = `${weightLbs} lbs`;
     } else {
       weightInKg = weightKg;
+      formattedWeight = `${weightKg} kg`;
     }
 
     let bmiVal = 0;
@@ -3068,26 +3541,31 @@ function BmiCalculator() {
 
     const roundedBmi = Math.round(bmiVal * 10) / 10;
 
-    let cat = "Normal weight";
-    let col = "text-teal-300 border-teal-500/30 bg-teal-500/10";
+    let cat = "Healthy / Normal";
+    let col = "text-cyan-300 border-cyan-500/30 bg-cyan-500/10";
     let ratio = 0.4;
+    let cue = "You are in the optimal healthy weight bracket! Great balance of lean mass and conditioning.";
 
     if (roundedBmi < 18.5) {
       cat = "Underweight";
       col = "text-sky-300 border-sky-500/30 bg-sky-500/10";
-      ratio = Math.max(0.05, ((roundedBmi - 12) / (18.5 - 12)) * 0.25);
+      ratio = Math.max(0.04, ((roundedBmi - 12) / (18.5 - 12)) * 0.25);
+      cue = "Below standard range. Focus on nutrient-dense calorie surplus and progressive hypertrophy training.";
     } else if (roundedBmi < 25) {
       cat = "Healthy / Normal";
       col = "text-cyan-300 border-cyan-500/30 bg-cyan-500/10";
       ratio = 0.25 + ((roundedBmi - 18.5) / (25 - 18.5)) * 0.35;
+      cue = "Optimal athletic baseline! Excellent balance of muscle mass and metabolic conditioning.";
     } else if (roundedBmi < 30) {
       cat = "Overweight";
       col = "text-amber-300 border-amber-500/30 bg-amber-500/10";
       ratio = 0.6 + ((roundedBmi - 25) / (30 - 25)) * 0.25;
+      cue = "Slightly above standard range. If you train heavy, muscle mass can skew BMI; otherwise, a structured deficit helps lean out.";
     } else {
       cat = "Obese";
       col = "text-rose-300 border-rose-500/30 bg-rose-500/10";
-      ratio = Math.min(0.98, 0.85 + ((roundedBmi - 30) / (40 - 30)) * 0.15);
+      ratio = Math.min(0.96, 0.85 + ((roundedBmi - 30) / (40 - 30)) * 0.15);
+      cue = "Above standard range. Consistent daily movement, progressive workouts, and balanced nutrition will yield rapid rewards.";
     }
 
     return {
@@ -3096,200 +3574,675 @@ function BmiCalculator() {
       color: col,
       idealRange: `${idealMin} – ${idealMax} ${unitLabel}`,
       progressRatio: Math.min(Math.max(ratio, 0.03), 0.97),
+      heightFormatted: formattedHeight,
+      weightFormatted: formattedWeight,
+      insight: cue,
     };
   }, [heightUnit, weightUnit, feet, inches, heightCm, weightLbs, weightKg]);
 
-  return (
-    <div className="liquid-glass rounded-3xl p-6 shadow-2xl space-y-6">
-      {/* Card Header */}
-      <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/[0.06]">
-        <div className="flex items-center gap-2.5">
-          <span className="liquid-pill flex h-7 w-7 items-center justify-center rounded-xl text-sky-400">
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-            </svg>
-          </span>
-          <div>
-            <h3 className="text-sm font-extrabold text-white">Body Mass Index (BMI)</h3>
-            <p className="text-[10px] text-slate-400">Mix & match height & weight units freely</p>
+  function handleSaveBmi() {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+    const d = new Date();
+    const dateStr = `${monthNames[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+
+    const dataToSave: SavedBmiData = {
+      bmi,
+      category,
+      color,
+      idealRange,
+      heightFormatted,
+      weightFormatted,
+      feet,
+      inches,
+      heightCm,
+      weightLbs,
+      weightKg,
+      heightUnit,
+      weightUnit,
+      savedAt: dateStr,
+    };
+
+    saveBmiToStorage(dataToSave);
+    setSavedBmi(dataToSave);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 2500);
+  }
+
+  function handleResetSavedBmi() {
+    saveBmiToStorage(null);
+    setSavedBmi(null);
+    setMode("wizard");
+    goToStep(0, "backward");
+  }
+
+  const isCurrentSaved =
+    savedBmi &&
+    savedBmi.feet === feet &&
+    savedBmi.inches === inches &&
+    savedBmi.heightCm === heightCm &&
+    savedBmi.weightLbs === weightLbs &&
+    savedBmi.weightKg === weightKg &&
+    savedBmi.heightUnit === heightUnit &&
+    savedBmi.weightUnit === weightUnit;
+
+  // Active step container animation class
+  const stepAnimClass =
+    transitionState === "exiting"
+      ? direction === "forward"
+        ? "animate-step-out-left opacity-0 pointer-events-none"
+        : "animate-step-out-right opacity-0 pointer-events-none"
+      : direction === "forward"
+      ? "animate-step-in-right"
+      : "animate-step-in-left";
+
+  /* ═════════════════════════════════════════════════════════════
+     VIEW A: SAVED BASELINE CARD (When user has already saved BMI)
+     ═════════════════════════════════════════════════════════════ */
+  if (mode === "saved" && savedBmi) {
+    const savedProgress =
+      savedBmi.bmi < 18.5
+        ? Math.max(0.04, ((savedBmi.bmi - 12) / (18.5 - 12)) * 0.25)
+        : savedBmi.bmi < 25
+        ? 0.25 + ((savedBmi.bmi - 18.5) / (25 - 18.5)) * 0.35
+        : savedBmi.bmi < 30
+        ? 0.6 + ((savedBmi.bmi - 25) / (30 - 25)) * 0.25
+        : Math.min(0.96, 0.85 + ((savedBmi.bmi - 30) / (40 - 30)) * 0.15);
+
+    return (
+      <div className="liquid-glass rounded-3xl p-6 shadow-2xl space-y-5 animate-fade-in border border-white/[0.08]">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+          <div className="flex items-center gap-2.5">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_10px_#34d399]" />
+            <div>
+              <h3 className="text-sm font-extrabold text-white">Your Saved BMI Baseline</h3>
+              <p className="text-[10px] text-slate-400">Recorded on {savedBmi.savedAt}</p>
+            </div>
           </div>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/30 text-emerald-300">
+            Active Baseline
+          </span>
+        </div>
+
+        {/* Calculated Score Card */}
+        <div className="liquid-glass rounded-2xl p-5 border-white/10 space-y-3.5 shadow-inner">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[11px] font-bold text-slate-400">Score</p>
+              <p className="text-4xl font-black text-white tracking-tight mt-0.5">{savedBmi.bmi}</p>
+            </div>
+            <div className="text-right">
+              <span className={`liquid-pill inline-block rounded-xl px-3 py-1 text-xs font-bold ${savedBmi.color}`}>
+                {savedBmi.category}
+              </span>
+              <p className="text-[11px] text-slate-400 mt-1 font-medium">Ideal: {savedBmi.idealRange}</p>
+            </div>
+          </div>
+
+          {/* Height & Weight Parameters Badges */}
+          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+            <span className="px-3 py-1 rounded-xl bg-white/[0.04] text-slate-300 border border-white/[0.06]">
+              Height: <strong className="text-white font-bold">{savedBmi.heightFormatted}</strong>
+            </span>
+            <span className="px-3 py-1 rounded-xl bg-white/[0.04] text-slate-300 border border-white/[0.06]">
+              Weight: <strong className="text-white font-bold">{savedBmi.weightFormatted}</strong>
+            </span>
+          </div>
+
+          {/* Spectrum Bar */}
+          <div className="relative pt-2">
+            <div className="h-2 w-full rounded-full bg-gradient-to-r from-sky-400 via-teal-300 via-amber-300 to-rose-400" />
+            <div
+              className="absolute top-0 h-4 w-1.5 rounded-full bg-white shadow-[0_0_10px_#ffffff] transition-all duration-300 -translate-x-1/2"
+              style={{ left: `${savedProgress * 100}%` }}
+            />
+            <div className="flex justify-between text-[9px] font-bold text-slate-400 mt-1.5">
+              <span>Under (&lt;18.5)</span>
+              <span>Healthy (18.5-24.9)</span>
+              <span>Over (25-29.9)</span>
+              <span>Obese (30+)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Why it is saved message */}
+        <p className="text-xs text-slate-400 leading-relaxed px-1">
+          A person does not change their body mass index quickly, so your baseline is preserved here. Whenever your weight or measurements shift, update it below.
+        </p>
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => {
+              setMode("wizard");
+              goToStep(1, "forward");
+            }}
+            className="flex-1 py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-400 hover:from-sky-400 hover:to-teal-300 text-white text-xs font-bold transition-all shadow-md shadow-cyan-500/20 flex items-center justify-center gap-2 button-press"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            <span>Recalculate / Update BMI</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleResetSavedBmi}
+            className="px-3.5 py-3 rounded-2xl border border-white/10 hover:border-rose-500/30 hover:bg-rose-950/20 text-slate-400 hover:text-rose-300 text-xs font-semibold transition-colors button-press"
+            title="Reset baseline"
+          >
+            Clear
+          </button>
         </div>
       </div>
+    );
+  }
 
-      <div className="space-y-5">
-        {/* ── 1. Height Controls ── */}
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.01] p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Height</span>
-              <span className="font-mono text-xs font-black text-cyan-300 px-2 py-0.5 rounded-md bg-cyan-500/10 border border-cyan-500/20">
-                {heightUnit === "ft_in" ? `${feet} ft ${inches} in` : `${heightCm} cm`}
-              </span>
-            </div>
+  /* ═════════════════════════════════════════════════════════════
+     VIEW B: PROGRESSIVE CONVERSATIONAL EXPERIENCE (Steps 0, 1, 2, 3)
+     ═════════════════════════════════════════════════════════════ */
+  return (
+    <div className="liquid-glass rounded-3xl p-6 shadow-2xl space-y-5 animate-fade-in border border-white/[0.08] overflow-hidden">
+      {/* ── STEP 0: FRIENDLY INVITATION & ANIMATED GRAPHIC ── */}
+      {step === 0 && (
+        <div className={`space-y-5 text-center py-2 transition-all duration-200 ${stepAnimClass}`}>
+          {/* Smart Scale Graphic with Interactive Biometric Ping */}
+          <BmiIntroGraphic isPing={isPing} />
 
-            {/* Height Unit Segmented Toggle */}
-            <div className="liquid-pill flex rounded-lg p-0.5 border-white/10">
-              <button
-                type="button"
-                onClick={() => handleHeightUnitChange("ft_in")}
-                className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all button-press ${
-                  heightUnit === "ft_in" ? "bg-cyan-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                ft / in
-              </button>
-              <button
-                type="button"
-                onClick={() => handleHeightUnitChange("cm")}
-                className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all button-press ${
-                  heightUnit === "cm" ? "bg-cyan-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                cm
-              </button>
-            </div>
+          {/* Friendly Conversational Hook */}
+          <div className="space-y-1.5">
+            <h3 className="text-2xl font-black text-white tracking-tight">Wanna know your BMI?</h3>
+            <p className="text-xs text-slate-300 max-w-sm mx-auto leading-relaxed">
+              Take a quick 15-second check-in to calibrate your body mass index, discover your healthy weight zone, and save your baseline.
+            </p>
           </div>
 
-          {heightUnit === "ft_in" ? (
-            <div className="grid grid-cols-2 gap-4 pt-1">
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <span>Feet</span>
-                  <span className="text-white font-mono">{feet} ft</span>
-                </div>
-                <input
-                  type="range"
-                  min={3}
-                  max={7}
-                  value={feet}
-                  onChange={(e) => setFeet(parseInt(e.target.value, 10))}
-                  className="w-full accent-cyan-400 cursor-pointer"
-                />
-              </div>
+          {/* Primary CTA Button with interactive click animation */}
+          <div className="pt-2 space-y-2.5 max-w-xs mx-auto">
+            <button
+              type="button"
+              onClick={() => goToStep(1, "forward")}
+              className="group relative w-full py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-400 hover:from-sky-400 hover:to-teal-300 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 transition-all flex items-center justify-center gap-2 overflow-hidden active:scale-95 button-press"
+            >
+              {/* Light sweep effect on hover */}
+              <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700 pointer-events-none" />
 
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <span>Inches</span>
-                  <span className="text-white font-mono">{inches} in</span>
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={11}
-                  value={inches}
-                  onChange={(e) => setInches(parseInt(e.target.value, 10))}
-                  className="w-full accent-cyan-400 cursor-pointer"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="space-y-1 pt-1">
-              <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                <span>Centimeters</span>
-                <span className="text-white font-mono">{heightCm} cm</span>
-              </div>
-              <input
-                type="range"
-                min={100}
-                max={240}
-                value={heightCm}
-                onChange={(e) => setHeightCm(parseInt(e.target.value, 10))}
-                className="w-full accent-cyan-400 cursor-pointer"
-              />
-            </div>
-          )}
-        </div>
+              <span>Yes, let's find out</span>
+              <svg
+                className={`w-4 h-4 transition-transform duration-300 ${
+                  isPing ? "translate-x-2 text-cyan-200" : "group-hover:translate-x-1"
+                }`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2.5}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+            </button>
 
-        {/* ── 2. Weight Controls ── */}
-        <div className="rounded-2xl border border-white/[0.06] bg-white/[0.01] p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">Weight</span>
-              <span className="font-mono text-xs font-black text-sky-300 px-2 py-0.5 rounded-md bg-sky-500/10 border border-sky-500/20">
-                {weightUnit === "lbs" ? `${weightLbs} lbs` : `${weightKg} kg`}
-              </span>
-            </div>
-
-            {/* Weight Unit Segmented Toggle */}
-            <div className="liquid-pill flex rounded-lg p-0.5 border-white/10">
+            {savedBmi && (
               <button
                 type="button"
-                onClick={() => handleWeightUnitChange("lbs")}
-                className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all button-press ${
-                  weightUnit === "lbs" ? "bg-sky-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                }`}
+                onClick={() => setMode("saved")}
+                className="w-full text-xs text-slate-400 hover:text-cyan-300 transition-colors py-1 block"
               >
-                lbs
+                You have a saved baseline ({savedBmi.bmi}) · <span className="underline font-semibold">View it</span>
               </button>
-              <button
-                type="button"
-                onClick={() => handleWeightUnitChange("kg")}
-                className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md transition-all button-press ${
-                  weightUnit === "kg" ? "bg-sky-600 text-white shadow-sm" : "text-slate-400 hover:text-white"
-                }`}
-              >
-                kg
-              </button>
-            </div>
-          </div>
-
-          <div className="space-y-1 pt-1">
-            <div className="flex justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-              <span>{weightUnit === "lbs" ? "Pounds (lbs)" : "Kilograms (kg)"}</span>
-              <span className="text-white font-mono">{weightUnit === "lbs" ? `${weightLbs} lbs` : `${weightKg} kg`}</span>
-            </div>
-            {weightUnit === "lbs" ? (
-              <input
-                type="range"
-                min={60}
-                max={450}
-                value={weightLbs}
-                onChange={(e) => setWeightLbs(parseInt(e.target.value, 10))}
-                className="w-full accent-sky-400 cursor-pointer"
-              />
-            ) : (
-              <input
-                type="range"
-                min={30}
-                max={200}
-                value={weightKg}
-                onChange={(e) => setWeightKg(parseFloat(e.target.value))}
-                className="w-full accent-sky-400 cursor-pointer"
-              />
             )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* ── 3. Calculated BMI Score Card ── */}
-      <div className="liquid-glass rounded-2xl p-4.5 border-white/10 space-y-3.5 animate-fade-in">
-        <div className="flex items-center justify-between">
+      {/* ── STEP 1: HEIGHT QUESTION ── */}
+      {step === 1 && (
+        <div className={`space-y-4 transition-all duration-200 ${stepAnimClass}`}>
+          {/* Header & Step Tracker */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+            <button
+              type="button"
+              onClick={() => goToStep(0, "backward")}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition-colors button-press"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+              </svg>
+              <span>Back</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-cyan-300">Step 1 of 2</span>
+              <div className="flex gap-1">
+                <span className="w-4 h-1 rounded-full bg-cyan-400" />
+                <span className="w-4 h-1 rounded-full bg-white/10" />
+              </div>
+            </div>
+          </div>
+
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Calculated Score</p>
-            <p className="text-3xl font-black tracking-tight text-white mt-0.5">{bmi}</p>
+            <h3 className="text-xl font-black text-white tracking-tight">How tall are you?</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Slide to dial in or tap a common height below</p>
           </div>
-          <div className="text-right">
-            <span className={`liquid-pill inline-block rounded-lg px-2.5 py-1 text-xs font-bold ${color}`}>
-              {category}
-            </span>
-            <p className="text-[10px] text-slate-400 mt-1 font-medium">Ideal: {idealRange}</p>
-          </div>
-        </div>
 
-        <div className="relative pt-2">
-          <div className="h-2 w-full rounded-full bg-gradient-to-r from-sky-400 via-teal-300 via-amber-300 to-rose-400" />
-          <div
-            className="absolute top-0 h-4 w-1.5 rounded-full bg-white shadow-[0_0_10px_#ffffff] transition-all duration-300 -translate-x-1/2"
-            style={{ left: `${progressRatio * 100}%` }}
-          />
-          <div className="flex justify-between text-[8px] font-bold uppercase tracking-wider text-slate-500 mt-1.5">
-            <span>Under (&lt;18.5)</span>
-            <span>Healthy (18.5-24.9)</span>
-            <span>Over (25-29.9)</span>
-            <span>Obese (30+)</span>
+          {/* Unit Toggle & Interactive Display */}
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.015] p-4.5 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-300">Measurement unit</span>
+              <div className="flex p-0.5 rounded-xl bg-white/[0.06] border border-white/[0.08]">
+                <button
+                  type="button"
+                  onClick={() => handleHeightUnitChange("ft_in")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all button-press ${
+                    heightUnit === "ft_in"
+                      ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-sm shadow-cyan-500/20"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  ft / in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleHeightUnitChange("cm")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all button-press ${
+                    heightUnit === "cm"
+                      ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-sm shadow-cyan-500/20"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  cm
+                </button>
+              </div>
+            </div>
+
+            {/* Clean, Non-AI Human Typography Display */}
+            <div className="text-center py-4 px-4 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/[0.08] shadow-inner">
+              <div className="flex items-baseline justify-center gap-1.5">
+                <span className="text-5xl font-black text-white tracking-tight">
+                  {heightUnit === "ft_in" ? feet : heightCm}
+                </span>
+                <span className="text-2xl font-bold text-cyan-300">
+                  {heightUnit === "ft_in" ? "ft" : "cm"}
+                </span>
+                {heightUnit === "ft_in" && (
+                  <>
+                    <span className="text-5xl font-black text-white tracking-tight ml-2">
+                      {inches}
+                    </span>
+                    <span className="text-2xl font-bold text-cyan-300">in</span>
+                  </>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-1 font-medium">
+                {heightUnit === "ft_in"
+                  ? `Approx. ${Math.round((feet * 12 + inches) * 2.54)} cm`
+                  : `Approx. ${Math.floor(heightCm / 2.54 / 12)} ft ${Math.round((heightCm / 2.54) % 12)} in`}
+              </p>
+            </div>
+
+            {/* Sliders */}
+            {heightUnit === "ft_in" ? (
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-semibold text-slate-300">
+                    <span>Feet</span>
+                    <span className="text-cyan-300 font-bold">{feet} ft</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={3}
+                    max={7}
+                    value={feet}
+                    onChange={(e) => setFeet(parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-400 h-2 bg-white/10 rounded-lg cursor-pointer"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-semibold text-slate-300">
+                    <span>Inches</span>
+                    <span className="text-cyan-300 font-bold">{inches} in</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={11}
+                    value={inches}
+                    onChange={(e) => setInches(parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-400 h-2 bg-white/10 rounded-lg cursor-pointer"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex justify-between text-xs font-semibold text-slate-300">
+                  <span>Centimeters</span>
+                  <span className="text-cyan-300 font-bold">{heightCm} cm</span>
+                </div>
+                <input
+                  type="range"
+                  min={100}
+                  max={240}
+                  value={heightCm}
+                  onChange={(e) => setHeightCm(parseInt(e.target.value, 10))}
+                  className="w-full accent-cyan-400 h-2 bg-white/10 rounded-lg cursor-pointer"
+                />
+              </div>
+            )}
+
+            {/* Tactile Common Presets */}
+            <div className="space-y-2 pt-1">
+              <span className="text-[11px] font-medium text-slate-400 block">Common heights</span>
+              <div className="flex flex-wrap gap-2">
+                {heightUnit === "ft_in"
+                  ? [
+                      { f: 5, i: 6, label: "5'6\"" },
+                      { f: 5, i: 8, label: "5'8\"" },
+                      { f: 5, i: 10, label: "5'10\"" },
+                      { f: 6, i: 0, label: "6'0\"" },
+                      { f: 6, i: 2, label: "6'2\"" },
+                    ].map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        onClick={() => {
+                          setFeet(p.f);
+                          setInches(p.i);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all button-press ${
+                          feet === p.f && inches === p.i
+                            ? "bg-cyan-500 text-white shadow-md shadow-cyan-500/25"
+                            : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white border border-white/[0.06]"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))
+                  : [165, 172, 178, 183, 188].map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setHeightCm(c)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all button-press ${
+                          heightCm === c
+                            ? "bg-cyan-500 text-white shadow-md shadow-cyan-500/25"
+                            : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white border border-white/[0.06]"
+                        }`}
+                      >
+                        {c} cm
+                      </button>
+                    ))}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => goToStep(2, "forward")}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-400 hover:from-sky-400 hover:to-teal-300 text-white font-bold text-sm shadow-xl shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 active:scale-95 button-press"
+          >
+            <span>Continue to Weight</span>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* ── STEP 2: WEIGHT QUESTION ── */}
+      {step === 2 && (
+        <div className={`space-y-4 transition-all duration-200 ${stepAnimClass}`}>
+          {/* Header & Step Tracker */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+            <button
+              type="button"
+              onClick={() => goToStep(1, "backward")}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition-colors button-press"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+              </svg>
+              <span>Back to Height</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-sky-300">Step 2 of 2</span>
+              <div className="flex gap-1">
+                <span className="w-4 h-1 rounded-full bg-cyan-400" />
+                <span className="w-4 h-1 rounded-full bg-sky-400" />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h3 className="text-xl font-black text-white tracking-tight">And what's your weight?</h3>
+            <p className="text-xs text-slate-400 mt-0.5">We'll compute your BMI score and ideal range in real time</p>
+          </div>
+
+          {/* Unit Toggle & Interactive Display */}
+          <div className="rounded-2xl border border-white/[0.06] bg-white/[0.015] p-4.5 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-slate-300">Measurement unit</span>
+              <div className="flex p-0.5 rounded-xl bg-white/[0.06] border border-white/[0.08]">
+                <button
+                  type="button"
+                  onClick={() => handleWeightUnitChange("lbs")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all button-press ${
+                    weightUnit === "lbs"
+                      ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-sm shadow-sky-500/20"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  lbs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleWeightUnitChange("kg")}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all button-press ${
+                    weightUnit === "kg"
+                      ? "bg-gradient-to-r from-sky-500 to-cyan-500 text-white shadow-sm shadow-sky-500/20"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  kg
+                </button>
+              </div>
+            </div>
+
+            {/* Clean, Non-AI Human Typography Display */}
+            <div className="text-center py-4 px-4 rounded-2xl bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/[0.08] shadow-inner">
+              <div className="flex items-baseline justify-center gap-1.5">
+                <span className="text-5xl font-black text-white tracking-tight">
+                  {weightUnit === "lbs" ? weightLbs : weightKg}
+                </span>
+                <span className="text-2xl font-bold text-sky-300">
+                  {weightUnit}
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 font-medium">
+                {weightUnit === "lbs"
+                  ? `Approx. ${Math.round((weightLbs / 2.20462) * 10) / 10} kg`
+                  : `Approx. ${Math.round(weightKg * 2.20462)} lbs`}
+              </p>
+            </div>
+
+            {/* Slider */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex justify-between text-xs font-semibold text-slate-300">
+                <span>Weight</span>
+                <span className="text-sky-300 font-bold">{weightUnit === "lbs" ? `${weightLbs} lbs` : `${weightKg} kg`}</span>
+              </div>
+              {weightUnit === "lbs" ? (
+                <input
+                  type="range"
+                  min={60}
+                  max={450}
+                  value={weightLbs}
+                  onChange={(e) => setWeightLbs(parseInt(e.target.value, 10))}
+                  className="w-full accent-sky-400 h-2 bg-white/10 rounded-lg cursor-pointer"
+                />
+              ) : (
+                <input
+                  type="range"
+                  min={30}
+                  max={200}
+                  value={weightKg}
+                  onChange={(e) => setWeightKg(parseFloat(e.target.value))}
+                  className="w-full accent-sky-400 h-2 bg-white/10 rounded-lg cursor-pointer"
+                />
+              )}
+            </div>
+
+            {/* Tactile Common Presets */}
+            <div className="space-y-2 pt-1">
+              <span className="text-[11px] font-medium text-slate-400 block">Common weights</span>
+              <div className="flex flex-wrap gap-2">
+                {weightUnit === "lbs"
+                  ? [135, 155, 170, 185, 205].map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        onClick={() => setWeightLbs(w)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all button-press ${
+                          weightLbs === w
+                            ? "bg-sky-500 text-white shadow-md shadow-sky-500/25"
+                            : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white border border-white/[0.06]"
+                        }`}
+                      >
+                        {w} lbs
+                      </button>
+                    ))
+                  : [60, 70, 77, 84, 92].map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        onClick={() => setWeightKg(w)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-all button-press ${
+                          weightKg === w
+                            ? "bg-sky-500 text-white shadow-md shadow-sky-500/25"
+                            : "bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-white border border-white/[0.06]"
+                        }`}
+                      >
+                        {w} kg
+                      </button>
+                    ))}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => goToStep(3, "forward")}
+            className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-400 hover:from-sky-400 hover:to-teal-300 text-white font-bold text-sm shadow-xl shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 active:scale-95 button-press"
+          >
+            <span>Calculate My BMI</span>
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {/* ── STEP 3: RESULT & SAVE BASELINE ── */}
+      {step === 3 && (
+        <div className={`space-y-4 transition-all duration-200 ${stepAnimClass}`}>
+          {/* Header & Adjust Inputs Button */}
+          <div className="flex items-center justify-between pb-3 border-b border-white/[0.06]">
+            <button
+              type="button"
+              onClick={() => goToStep(2, "backward")}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-white transition-colors button-press"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+              </svg>
+              <span>Adjust Measurements</span>
+            </button>
+            <span className="text-[11px] font-bold text-cyan-300">Calculated Baseline</span>
+          </div>
+
+          <div>
+            <h3 className="text-xl font-black text-white tracking-tight">Your Body Mass Index</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Based on {heightFormatted} and {weightFormatted}</p>
+          </div>
+
+          {/* Result Card */}
+          <div className="liquid-glass rounded-2xl p-5 border-white/10 space-y-3.5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-400">Score</p>
+                <p className="text-4xl font-black tracking-tight text-white mt-0.5">{bmi}</p>
+              </div>
+              <div className="text-right">
+                <span className={`liquid-pill inline-block rounded-xl px-3 py-1 text-xs font-bold ${color}`}>
+                  {category}
+                </span>
+                <p className="text-[11px] text-slate-400 mt-1 font-medium">Ideal: {idealRange}</p>
+              </div>
+            </div>
+
+            {/* Spectrum Bar */}
+            <div className="relative pt-2">
+              <div className="h-2 w-full rounded-full bg-gradient-to-r from-sky-400 via-teal-300 via-amber-300 to-rose-400" />
+              <div
+                className="absolute top-0 h-4 w-1.5 rounded-full bg-white shadow-[0_0_10px_#ffffff] transition-all duration-300 -translate-x-1/2"
+                style={{ left: `${progressRatio * 100}%` }}
+              />
+              <div className="flex justify-between text-[9px] font-bold text-slate-400 mt-1.5">
+                <span>Under (&lt;18.5)</span>
+                <span>Healthy (18.5-24.9)</span>
+                <span>Over (25-29.9)</span>
+                <span>Obese (30+)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Friendly Guidance Insight */}
+          <div className="p-3.5 rounded-2xl bg-white/[0.02] border border-white/[0.06] text-xs text-slate-300 flex items-start gap-2.5">
+            <span className="h-2 w-2 rounded-full bg-cyan-400 shrink-0 mt-1 shadow-[0_0_6px_#38bdf8]" />
+            <p className="leading-relaxed text-xs text-slate-300">{insight}</p>
+          </div>
+
+          {/* Save My BMI Baseline Action Box */}
+          <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-500/10 via-teal-500/5 to-transparent border border-emerald-500/30 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold text-white">Save your BMI baseline</p>
+              <p className="text-[11px] text-slate-400">Because BMI changes gradually over months, saving keeps your profile calibrated.</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveBmi}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all button-press flex items-center gap-1.5 shrink-0 ${
+                isCurrentSaved || justSaved
+                  ? "bg-emerald-500/20 border border-emerald-400/40 text-emerald-300"
+                  : "bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white shadow-md shadow-emerald-500/20"
+              }`}
+            >
+              <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+              <span>{isCurrentSaved || justSaved ? "Saved to Baseline" : "Save My Baseline"}</span>
+            </button>
+          </div>
+
+          {/* Navigation Controls */}
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => goToStep(1, "backward")}
+              className="flex-1 py-2.5 rounded-xl border border-white/10 hover:bg-white/[0.05] text-slate-300 text-xs font-bold transition-colors button-press text-center"
+            >
+              Recalculate
+            </button>
+            {(isCurrentSaved || justSaved) && (
+              <button
+                type="button"
+                onClick={() => setMode("saved")}
+                className="py-2.5 px-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-white text-xs font-bold transition-colors button-press"
+              >
+                View Saved Baseline →
+              </button>
+            )}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -3941,6 +4894,1030 @@ function formatDashboardDate(dateStr?: string): string {
 }
 
 /* ═══════════════════════════════════════════════════════════════
+   Elegant Minimalist Studio Components (Zero Emojis, Pure SVG Vector & Typography)
+   ═══════════════════════════════════════════════════════════════ */
+
+function getMuscleDistribution(workouts: SupabaseWorkout[]) {
+  const groups: Record<string, number> = {
+    Chest: 0,
+    Back: 0,
+    Legs: 0,
+    Shoulders: 0,
+    Arms: 0,
+    Core: 0,
+  };
+
+  workouts.forEach((w) => {
+    (w.exercises || []).forEach((e) => {
+      const name = (e.name || "").toLowerCase();
+      const count = e.trackedSets?.length || 3;
+      if (name.includes("bench") || name.includes("chest") || (name.includes("press") && !name.includes("shoulder") && !name.includes("overhead"))) {
+        groups.Chest += count;
+      } else if (name.includes("pull") || name.includes("row") || name.includes("deadlift") || name.includes("lat")) {
+        groups.Back += count;
+      } else if (name.includes("squat") || name.includes("leg") || name.includes("calf") || name.includes("quad") || name.includes("hamstring")) {
+        groups.Legs += count;
+      } else if (name.includes("shoulder") || name.includes("overhead") || name.includes("lateral") || name.includes("military")) {
+        groups.Shoulders += count;
+      } else if (name.includes("curl") || name.includes("tricep") || name.includes("bicep") || name.includes("dip")) {
+        groups.Arms += count;
+      } else {
+        groups.Core += count;
+      }
+    });
+  });
+
+  const total = Object.values(groups).reduce((a, b) => a + b, 0);
+  if (total === 0) {
+    return [
+      { name: "Chest", dotColor: "bg-rose-500", color: "from-rose-500 to-orange-500", hexColor: "#f43f5e", percent: 28, sets: 0, target: "8 sets" },
+      { name: "Back", dotColor: "bg-cyan-400", color: "from-cyan-400 to-sky-600", hexColor: "#06b6d4", percent: 24, sets: 0, target: "8 sets" },
+      { name: "Legs", dotColor: "bg-purple-400", color: "from-purple-500 to-fuchsia-500", hexColor: "#a855f7", percent: 20, sets: 0, target: "6 sets" },
+      { name: "Shoulders", dotColor: "bg-amber-400", color: "from-amber-400 to-orange-500", hexColor: "#f59e0b", percent: 14, sets: 0, target: "5 sets" },
+      { name: "Arms", dotColor: "bg-teal-400", color: "from-teal-400 to-emerald-500", hexColor: "#10b981", percent: 10, sets: 0, target: "4 sets" },
+      { name: "Core", dotColor: "bg-emerald-400", color: "from-emerald-400 to-teal-500", hexColor: "#22c55e", percent: 4, sets: 0, target: "2 sets" },
+    ];
+  }
+
+  const items = [
+    { name: "Chest", dotColor: "bg-rose-500", color: "from-rose-500 to-orange-500", hexColor: "#f43f5e", sets: groups.Chest },
+    { name: "Back", dotColor: "bg-cyan-400", color: "from-cyan-400 to-sky-600", hexColor: "#06b6d4", sets: groups.Back },
+    { name: "Legs", dotColor: "bg-purple-400", color: "from-purple-500 to-fuchsia-500", hexColor: "#a855f7", sets: groups.Legs },
+    { name: "Shoulders", dotColor: "bg-amber-400", color: "from-amber-400 to-orange-500", hexColor: "#f59e0b", sets: groups.Shoulders },
+    { name: "Arms", dotColor: "bg-teal-400", color: "from-teal-400 to-emerald-500", hexColor: "#10b981", sets: groups.Arms },
+    { name: "Core", dotColor: "bg-emerald-400", color: "from-emerald-400 to-teal-500", hexColor: "#22c55e", sets: groups.Core },
+  ];
+
+  return items.map((m) => ({
+    ...m,
+    percent: Math.min(100, Math.round((m.sets / Math.max(1, total)) * 100)),
+    target: `${m.sets} sets`,
+  }));
+}
+
+/* ── Athlete Weekly Performance & Volume Analytics Hub ── */
+interface AthletePerformanceAnalyticsHubProps {
+  stats: GamificationStats;
+  userName?: string | null;
+  onNavigateProfile?: () => void;
+  onQuickStart: () => void;
+  onOpenLogToday?: () => void;
+  workouts: SupabaseWorkout[];
+  weeklySchedule: ScheduleDayItem[];
+}
+
+function AthletePerformanceAnalyticsHub({
+  stats,
+  userName,
+  onNavigateProfile,
+  onQuickStart,
+  onOpenLogToday,
+  workouts,
+  weeklySchedule,
+}: AthletePerformanceAnalyticsHubProps) {
+  const level = levelFromXP(stats.totalXP);
+  const title = titleForLevel(level);
+  const { progress, xpInLevel, nextLevelXP, currentLevelXP } = xpProgressInLevel(stats.totalXP);
+  const streakStatus = getCurrentStreakStatus(stats);
+  const unlockedCount = stats.unlockedAchievements.length;
+  const totalCount = ACHIEVEMENTS.length;
+
+  const now = new Date();
+  const currentMonday = new Date(now);
+  const todayDay = now.getDay();
+  const diffToMonday = (todayDay === 0 ? -6 : 1) - todayDay;
+  currentMonday.setDate(now.getDate() + diffToMonday);
+  currentMonday.setHours(0, 0, 0, 0);
+
+  const nextSunday = new Date(currentMonday);
+  nextSunday.setDate(currentMonday.getDate() + 7);
+
+  // Filter workouts belonging to this active week
+  const thisWeekWorkouts = workouts.filter((w) => {
+    if (!w.created_at) return false;
+    const d = new Date(w.created_at);
+    return d >= currentMonday && d < nextSunday;
+  });
+
+  const workoutsThisWeekCount = thisWeekWorkouts.length;
+  const weeklyTargetSessions = 4;
+  const adherencePercent = Math.min(100, Math.round((workoutsThisWeekCount / weeklyTargetSessions) * 100));
+
+  const weeklyMinutes = thisWeekWorkouts.reduce((acc, w) => acc + Math.round((w.duration_seconds || 0) / 60), 0);
+  const targetWeeklyMinutes = 180; // 3 hours weekly target
+
+  const totalSetsThisWeek = thisWeekWorkouts.reduce((acc, w) => acc + (w.completed_sets || 0), 0);
+  const estimatedCalories = thisWeekWorkouts.reduce((acc, w) => acc + (w.calories || Math.round(((w.duration_seconds || 0) / 60) * 7.5)), 0);
+
+  // Compute daily volume data for 7-day bar chart
+  const dayBars = weeklySchedule.map((s) => {
+    const isToday = s.status === "today";
+    const logged = s.loggedWorkout;
+    const durMins = logged ? Math.max(15, Math.round((logged.duration_seconds || 0) / 60)) : 0;
+    // Max height reference is 75 mins
+    const heightPercent = logged ? Math.min(100, Math.max(25, Math.round((durMins / 75) * 100))) : 0;
+
+    return {
+      day: s.day,
+      dateFormatted: s.dateFormatted,
+      isToday,
+      hasLogged: Boolean(logged),
+      title: logged?.day_title || "",
+      durMins,
+      heightPercent,
+    };
+  });
+
+  return (
+    <div className="relative rounded-2xl border border-slate-800 bg-slate-900/85 p-4 sm:p-5 backdrop-blur-md h-full flex flex-col justify-between space-y-4">
+      {/* 1. Header: Athlete Greeting & Level Progress */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+              {userName ? `Welcome back, ${userName}` : "Weekly Performance Hub"}
+            </h2>
+            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border border-cyan-500/30 text-cyan-300 bg-cyan-500/10">
+              {title}
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5 font-medium">
+            Level {level} Athlete • {stats.totalXP.toLocaleString()} XP
+          </p>
+        </div>
+
+        {/* Trophy Room Badge */}
+        <button
+          type="button"
+          onClick={onNavigateProfile}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors button-press shrink-0"
+          title="Open Trophy Room"
+        >
+          <svg className="h-3.5 w-3.5 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.504-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.003 0H9.497m5.003 0A6.75 6.75 0 0 0 21 7.5v-.75A2.25 2.25 0 0 0 18.75 4.5h-1.5A2.25 2.25 0 0 0 15 6.75v.75m-6 0v-.75A2.25 2.25 0 0 0 6.75 4.5h-1.5A2.25 2.25 0 0 0 3 6.75v.75a6.75 6.75 0 0 0 6.5 6.75" />
+          </svg>
+          <span className="font-mono tabular-nums">{unlockedCount}/{totalCount} Trophies</span>
+          <span className="text-slate-400">→</span>
+        </button>
+      </div>
+
+      {/* 2. Graphical Centerpiece: Weekly Training Volume & Load Chart */}
+      <div className="p-3.5 rounded-xl border border-slate-800/90 bg-slate-950/40">
+        <div className="flex items-center justify-between mb-2.5">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-cyan-400" />
+            <h3 className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+              Weekly Training Volume
+            </h3>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-semibold">
+            <span className="text-cyan-300 font-mono">{weeklyMinutes}m</span>
+            <span className="text-slate-500">/ {targetWeeklyMinutes}m Goal</span>
+          </div>
+        </div>
+
+        {/* 7-Day Visual Bar Chart */}
+        <div className="relative pt-4 pb-1">
+          {/* Target Baseline Guide Line */}
+          <div className="absolute top-8 inset-x-0 border-b border-dashed border-slate-800 flex justify-end pr-1 pointer-events-none">
+            <span className="text-[9px] font-mono text-slate-600 -mt-3.5">45m Pace</span>
+          </div>
+
+          <div className="grid grid-cols-7 gap-2 items-end h-28 relative z-10">
+            {dayBars.map((bar, idx) => (
+              <div
+                key={idx}
+                className="flex flex-col items-center justify-end h-full group"
+              >
+                {/* Duration Badge above bar */}
+                <div className="h-4 flex items-center justify-center mb-1">
+                  {bar.hasLogged ? (
+                    <span className="text-[9px] font-mono font-bold text-cyan-300">
+                      {bar.durMins}m
+                    </span>
+                  ) : bar.isToday ? (
+                    <span className="text-[8px] font-bold text-slate-500 uppercase">
+                      Today
+                    </span>
+                  ) : null}
+                </div>
+
+                {/* Vertical Bar Cylinder */}
+                <div className="w-full max-w-[28px] sm:max-w-[34px] h-20 bg-slate-900 rounded-lg flex flex-col justify-end p-0.5 border border-slate-800 group-hover:border-slate-700 transition-colors">
+                  {bar.hasLogged ? (
+                    <div
+                      className="w-full rounded-md bg-gradient-to-t from-cyan-500 to-sky-400 transition-all duration-500 flex items-end justify-center"
+                      style={{ height: `${bar.heightPercent}%` }}
+                      title={`${bar.day}: ${bar.title} (${bar.durMins}m)`}
+                    />
+                  ) : (
+                    <div className="w-full h-1 rounded-full bg-slate-800 my-1 mx-auto" />
+                  )}
+                </div>
+
+                {/* Day Label */}
+                <span
+                  className={`text-[10px] font-bold uppercase mt-1.5 transition-colors ${
+                    bar.isToday
+                      ? "text-cyan-300"
+                      : bar.hasLogged
+                      ? "text-slate-200"
+                      : "text-slate-500"
+                  }`}
+                >
+                  {bar.day}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Three High-Impact KPI Performance Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+        {/* Card 1: Weekly Sessions Target */}
+        <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/40 flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Weekly Target
+            </span>
+            <span className="text-[9px] font-bold text-cyan-400 border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.2 rounded">
+              {adherencePercent}%
+            </span>
+          </div>
+          <div className="my-1">
+            <span className="text-lg font-bold text-white font-mono">
+              {workoutsThisWeekCount}
+            </span>
+            <span className="text-xs text-slate-400 ml-1 font-medium">
+              / {weeklyTargetSessions} Sessions
+            </span>
+          </div>
+          {/* Segmented Bar */}
+          <div className="grid grid-cols-4 gap-1 mt-1">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div
+                key={i}
+                className={`h-1.5 rounded-full transition-colors ${
+                  i < workoutsThisWeekCount ? "bg-cyan-400" : "bg-slate-800"
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Card 2: Active Duration */}
+        <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/40 flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Active Time
+            </span>
+            <span className="text-[9px] font-mono text-slate-400">
+              {Math.min(100, Math.round((weeklyMinutes / targetWeeklyMinutes) * 100))}%
+            </span>
+          </div>
+          <div className="my-1">
+            <span className="text-lg font-bold text-white font-mono">
+              {weeklyMinutes}
+            </span>
+            <span className="text-xs text-slate-400 ml-1 font-medium">
+              min trained
+            </span>
+          </div>
+          {/* Linear Progress */}
+          <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden mt-1">
+            <div
+              className="h-full bg-sky-400 rounded-full transition-all duration-500"
+              style={{ width: `${Math.min(100, Math.max(4, (weeklyMinutes / targetWeeklyMinutes) * 100))}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Card 3: Output & Consistency */}
+        <div className="p-3 rounded-xl border border-slate-800 bg-slate-950/40 flex flex-col justify-between">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Momentum
+            </span>
+            <span className="text-[9px] font-semibold text-emerald-400">
+              {streakStatus.current > 0 ? `${streakStatus.current}d Streak` : workoutsThisWeekCount > 0 ? "Active" : "Ready"}
+            </span>
+          </div>
+          <div className="my-1">
+            <span className="text-lg font-bold text-white font-mono">
+              {totalSetsThisWeek > 0 ? `${totalSetsThisWeek} Sets` : `${estimatedCalories} kcal`}
+            </span>
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1 font-medium truncate">
+            {estimatedCalories > 0 ? `${estimatedCalories} kcal burned this week` : "Log activity to build streak"}
+          </p>
+        </div>
+      </div>
+
+      {/* 4. Bottom Action Strip */}
+      <div className="flex items-center justify-between gap-3 pt-2 border-t border-white/[0.06] flex-wrap">
+        <div className="flex items-center gap-2.5 flex-1 min-w-[160px]">
+          <div className="h-1.5 flex-1 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full rounded-full bg-cyan-400 transition-all duration-700"
+              style={{ width: `${Math.max(4, progress * 100)}%` }}
+            />
+          </div>
+          <span className="text-[10px] font-mono text-slate-400 shrink-0">
+            {xpInLevel}/{nextLevelXP - currentLevelXP} XP
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {onOpenLogToday && (
+            <button
+              type="button"
+              onClick={onOpenLogToday}
+              className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-bold text-xs hover:bg-cyan-500/25 hover:text-white transition-colors button-press"
+            >
+              + Log Today
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onQuickStart}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold text-xs transition-colors button-press shrink-0"
+          >
+            <span>Start Session</span>
+            <span>→</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Anatomical Human Body Heatmap & Muscle Distribution Layout ── */
+function MuscleDistributionGraphic({
+  workouts,
+  onQuickStart,
+}: {
+  workouts: SupabaseWorkout[];
+  onQuickStart: () => void;
+}) {
+  const distribution = useMemo(() => getMuscleDistribution(workouts), [workouts]);
+  const [view, setView] = useState<"front" | "back">("front");
+  const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
+
+  // Quick lookup map for muscle stats
+  const muscleMap = useMemo(() => {
+    const map: Record<string, (typeof distribution)[0]> = {};
+    distribution.forEach((d) => {
+      map[d.name] = d;
+    });
+    return map;
+  }, [distribution]);
+
+  const activeHoveredData = hoveredGroup ? muscleMap[hoveredGroup] : null;
+
+  return (
+    <div className="relative overflow-hidden rounded-3xl border border-white/[0.08] bg-gradient-to-br from-slate-900/95 via-[#081528]/95 to-slate-900/95 p-4 sm:p-5 shadow-2xl backdrop-blur-xl animate-fade-in-down h-full flex flex-col justify-between">
+      {/* Background ambient glow */}
+      <div className="pointer-events-none absolute -right-10 -top-10 h-36 w-36 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute -left-10 -bottom-10 h-36 w-36 rounded-full bg-purple-500/10 blur-3xl" />
+
+      {/* Header with Front / Back Anatomy View Toggle */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <svg className="h-4 w-4 text-cyan-400 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
+          </svg>
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider truncate">
+              Muscle Load Distribution
+            </h3>
+            <p className="text-[10px] text-slate-400 font-medium truncate">Anatomical Heatmap Scan</p>
+          </div>
+        </div>
+
+        {/* View Toggle Pill */}
+        <div className="flex items-center rounded-xl bg-white/[0.05] border border-white/10 p-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setView("front")}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+              view === "front"
+                ? "bg-cyan-500/25 text-cyan-300 border border-cyan-400/40 shadow-sm"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Front
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("back")}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${
+              view === "back"
+                ? "bg-cyan-500/25 text-cyan-300 border border-cyan-400/40 shadow-sm"
+                : "text-slate-400 hover:text-white"
+            }`}
+          >
+            Back
+          </button>
+        </div>
+      </div>
+
+      {/* Main Dual Panel: Human Body Silhouette + Telemetry List */}
+      <div className="grid grid-cols-12 gap-3 sm:gap-4 items-center my-auto py-1">
+        {/* Left: Anatomical Human Body Layout */}
+        <div className="col-span-5 sm:col-span-5 flex flex-col items-center justify-center relative">
+          <AnatomicalHumanBody
+            view={view}
+            distribution={distribution}
+            hoveredGroup={hoveredGroup}
+            onHoverGroup={setHoveredGroup}
+            onClickGroup={() => onQuickStart()}
+          />
+          <span className="text-[9px] font-mono text-slate-500 uppercase tracking-widest mt-1">
+            {view === "front" ? "Anterior View" : "Posterior View"}
+          </span>
+        </div>
+
+        {/* Right: Interactive Muscle Telemetry List */}
+        <div className="col-span-7 sm:col-span-7 space-y-2">
+          {distribution.map((item) => {
+            const isHovered = hoveredGroup === item.name;
+            return (
+              <div
+                key={item.name}
+                onMouseEnter={() => setHoveredGroup(item.name)}
+                onMouseLeave={() => setHoveredGroup(null)}
+                onClick={onQuickStart}
+                className={`p-2 sm:p-2.5 rounded-2xl border transition-all cursor-pointer button-press ${
+                  isHovered
+                    ? "bg-white/[0.08] border-cyan-400/50 shadow-[0_0_14px_rgba(56,189,248,0.2)]"
+                    : "bg-white/[0.025] border-white/[0.05] hover:bg-white/[0.05]"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className={`h-2.5 w-2.5 rounded-full shrink-0 transition-transform ${isHovered ? "scale-125" : ""}`}
+                      style={{ backgroundColor: item.hexColor, boxShadow: isHovered ? `0 0 8px ${item.hexColor}` : undefined }}
+                    />
+                    <span className={`font-bold text-xs truncate transition-colors ${isHovered ? "text-white" : "text-slate-200"}`}>
+                      {item.name}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] font-mono font-medium text-slate-400">{item.sets}s</span>
+                    <span className="text-[11px] font-mono font-black text-white tabular-nums w-8 text-right">
+                      {item.percent}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Mini Heat Progress Bar matching Picture 2 */}
+                <div className="h-1.5 w-full rounded-full bg-slate-950/70 border border-white/[0.06] overflow-hidden p-[0.5px]">
+                  <div
+                    className={`h-full rounded-full bg-gradient-to-r ${item.color} transition-all duration-700 ease-out shadow-sm`}
+                    style={{ width: `${Math.max(item.percent > 0 ? 8 : 2, item.percent)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Bottom Hint & Dynamic Telemetry Readout */}
+      <div className="flex items-center justify-between pt-2.5 mt-1 border-t border-white/[0.06] text-[10px]">
+        {activeHoveredData ? (
+          <div className="flex items-center gap-1.5 text-cyan-300 font-semibold truncate animate-fade-in">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: activeHoveredData.hexColor }} />
+            <span>{activeHoveredData.name}: {activeHoveredData.sets} sets logged ({activeHoveredData.percent}% weekly load)</span>
+          </div>
+        ) : (
+          <span className="text-slate-400">Hover muscle to inspect telemetry</span>
+        )}
+
+        <button
+          type="button"
+          onClick={onQuickStart}
+          className="text-cyan-400 font-semibold hover:text-white transition-colors flex items-center gap-1 shrink-0 ml-2"
+        >
+          <span>Target Group</span>
+          <span>→</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Reimagined Visual Microcycle Energy Wave (Weekly Progress & Activity Log) ── */
+export interface ScheduleDayItem {
+  day: string;
+  dayFull: string;
+  dayKey: number;
+  dateString: string;
+  dateFormatted: string;
+  dayDate: Date;
+  title: string;
+  subtitle?: string;
+  type: "workout" | "rest";
+  status: "completed" | "today" | "upcoming";
+  loggedWorkout?: SupabaseWorkout | null;
+  exercises?: Exercise[];
+}
+
+function VisualMicrocycleTrack({
+  schedule,
+  onStartToday,
+  onSelectDay,
+  onOpenLogToday,
+}: {
+  schedule: ScheduleDayItem[];
+  onStartToday: () => void;
+  onSelectDay: (day: ScheduleDayItem) => void;
+  onOpenLogToday: () => void;
+}) {
+  const completedDaysCount = schedule.filter((s) => s.status === "completed").length;
+
+  return (
+    <div className="relative rounded-2xl border border-slate-800 bg-slate-900/85 p-4 sm:p-5 backdrop-blur-md">
+      <div className="flex items-center justify-between gap-3 mb-3.5">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 rounded-full bg-cyan-400" />
+          <h3 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">
+            Weekly Progress & Activity Log
+          </h3>
+          <span className="text-[10px] sm:text-xs text-slate-400 font-medium">
+            • {completedDaysCount}/7 Days Logged
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenLogToday}
+            className="px-2.5 py-1 sm:px-3 sm:py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/30 text-[11px] sm:text-xs font-bold text-cyan-300 hover:bg-cyan-500/25 hover:text-white transition-colors flex items-center gap-1 button-press"
+          >
+            <span>+ Log Activity</span>
+          </button>
+          <button
+            type="button"
+            onClick={onStartToday}
+            className="text-[11px] sm:text-xs font-semibold text-slate-400 hover:text-white transition-colors items-center gap-1 group button-press hidden sm:flex"
+          >
+            <span>Start Live Session</span>
+            <span className="group-hover-arrow">→</span>
+          </button>
+        </div>
+      </div>
+
+      {/* 7-Day Track: Clean, Crisp Architectural Boxes */}
+      <div className="grid grid-cols-7 gap-1.5 sm:gap-2.5">
+        {schedule.map((day, idx) => {
+          const isToday = day.status === "today";
+          const isDone = day.status === "completed";
+
+          return (
+            <div
+              key={idx}
+              onClick={() => onSelectDay(day)}
+              className={`group relative flex flex-col items-center justify-between p-2 sm:p-2.5 rounded-xl border transition-colors cursor-pointer min-h-[134px] text-center button-press ${
+                isToday
+                  ? "border-cyan-500/70 bg-slate-800/70 hover:border-cyan-400"
+                  : isDone
+                  ? "border-emerald-500/40 bg-emerald-950/20 hover:border-emerald-500/60"
+                  : "border-slate-800/80 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-800/30"
+              }`}
+            >
+              {/* 1. Header: Day Monogram + Clear Date (e.g. Sept 8) */}
+              <div className="w-full pb-1.5 border-b border-white/[0.06] flex flex-col items-center">
+                <span
+                  className={`text-[10px] sm:text-[11px] font-bold tracking-wider uppercase ${
+                    isToday
+                      ? "text-cyan-300"
+                      : isDone
+                      ? "text-emerald-400"
+                      : "text-slate-300"
+                  }`}
+                >
+                  {day.day}
+                </span>
+                <span className="text-[9px] sm:text-[10px] font-medium text-slate-400 mt-0.5">
+                  {day.dateFormatted}
+                </span>
+              </div>
+
+              {/* 2. Center Icon: Clean, crisp tactile button without glowing AI circles */}
+              <div
+                className={`h-8 w-8 sm:h-9 sm:w-9 rounded-lg border flex items-center justify-center my-1.5 transition-colors ${
+                  isDone
+                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                    : isToday
+                    ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-300 group-hover:bg-cyan-500/25"
+                    : "border-slate-800 bg-slate-800/50 text-slate-500 group-hover:border-slate-700 group-hover:text-slate-300"
+                }`}
+              >
+                {isDone ? (
+                  <svg className="h-4 w-4 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                  </svg>
+                ) : (
+                  <svg className="h-3.5 w-3.5 sm:h-4 sm:w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                )}
+              </div>
+
+              {/* 3. Bottom: Focus Title & Status */}
+              <div className="w-full min-h-[32px] flex flex-col justify-center items-center">
+                <p
+                  className={`text-[10px] sm:text-[11px] font-semibold leading-tight truncate max-w-[62px] sm:max-w-[78px] ${
+                    isDone
+                      ? "text-emerald-300"
+                      : isToday
+                      ? "text-slate-200"
+                      : "text-slate-400"
+                  }`}
+                  title={day.title}
+                >
+                  {day.title}
+                </p>
+
+                {isDone ? (
+                  <span className="text-[8px] sm:text-[9px] font-medium text-emerald-400/90 mt-0.5 truncate max-w-full">
+                    {day.subtitle || "Done"}
+                  </span>
+                ) : isToday ? (
+                  <span className="inline-flex items-center justify-center mt-1 px-1.5 py-0.5 rounded text-[7px] sm:text-[8px] font-semibold uppercase tracking-wider border border-cyan-500/30 text-cyan-300 bg-cyan-500/10">
+                    Today
+                  </span>
+                ) : (
+                  <span className="text-[8px] sm:text-[9px] font-medium text-slate-500 mt-0.5 truncate max-w-full">
+                    {day.subtitle}
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Vibrant Minimalist Routine Card ── */
+function GraphicalRoutineCard({
+  template,
+  index,
+  onStart,
+}: {
+  template: WorkoutTemplate;
+  index: number;
+  onStart: () => void;
+}) {
+  const getTheme = () => {
+    const cat = (template.category || "").toLowerCase();
+    if (cat.includes("chest") || cat.includes("push") || index % 4 === 0) {
+      return {
+        meshClass: "card-mesh-push",
+        accentColor: "#f43f5e",
+        badgeBg: "bg-rose-500/10 text-rose-300 border-rose-400/25",
+        dotColor: "bg-rose-400",
+      };
+    }
+    if (cat.includes("back") || cat.includes("pull") || index % 4 === 1) {
+      return {
+        meshClass: "card-mesh-pull",
+        accentColor: "#06b6d4",
+        badgeBg: "bg-cyan-500/10 text-cyan-300 border-cyan-400/25",
+        dotColor: "bg-cyan-400",
+      };
+    }
+    if (cat.includes("leg") || cat.includes("lower") || index % 4 === 2) {
+      return {
+        meshClass: "card-mesh-legs",
+        accentColor: "#a855f7",
+        badgeBg: "bg-purple-500/10 text-purple-300 border-purple-400/25",
+        dotColor: "bg-purple-400",
+      };
+    }
+    return {
+      meshClass: "card-mesh-upper",
+      accentColor: "#10b981",
+      badgeBg: "bg-emerald-500/10 text-emerald-300 border-emerald-400/25",
+      dotColor: "bg-emerald-400",
+    };
+  };
+
+  const theme = getTheme();
+
+  return (
+    <div className={`relative overflow-hidden rounded-3xl border border-white/[0.08] p-4 sm:p-5 transition-all duration-300 flex flex-col justify-between group ${theme.meshClass}`}>
+      <div>
+        {/* Top bar: Category Badge */}
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <span className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border ${theme.badgeBg}`}>
+            <span className={`h-1.5 w-1.5 rounded-full ${theme.dotColor}`} />
+            <span>{template.category}</span>
+          </span>
+        </div>
+
+        {/* Title & Preview */}
+        <h4 className="text-sm sm:text-base font-bold text-white group-hover:text-cyan-300 transition-colors tracking-tight">
+          {template.name}
+        </h4>
+
+        {/* Exercise Preview Pill Tags */}
+        <div className="flex flex-wrap gap-1.5 mt-2.5">
+          {template.exercises.slice(0, 3).map((e, i) => (
+            <span
+              key={i}
+              className="px-2 py-0.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[9px] sm:text-[10px] font-medium text-slate-300 truncate max-w-[140px]"
+            >
+              {e.name}
+            </span>
+          ))}
+          {template.exercises.length > 3 && (
+            <span className="px-1.5 py-0.5 rounded-lg bg-white/[0.03] text-[9px] font-medium text-slate-400">
+              +{template.exercises.length - 3}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Elegant Action CTA */}
+      <button
+        type="button"
+        onClick={onStart}
+        className="mt-4 w-full py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.12] hover:border-white/25 text-white font-semibold text-xs transition-all button-press flex items-center justify-center gap-1.5 group/btn"
+      >
+        <span>Launch Workout</span>
+        <span className="group-hover/btn:translate-x-1 transition-transform">→</span>
+      </button>
+    </div>
+  );
+}
+
+/* ── Visual Minimalist Quest Crest ── */
+function VisualQuestCrest({
+  challengeInfo,
+}: {
+  challengeInfo: NonNullable<ReturnType<typeof getActiveChallenge>>;
+}) {
+  const r = 20;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.min(1, Math.max(0.04, challengeInfo.progress)));
+
+  return (
+    <div className={`relative overflow-hidden rounded-3xl border p-4 transition-all shadow-xl ${
+      challengeInfo.completed
+        ? "border-emerald-400/30 bg-gradient-to-br from-emerald-950/25 to-slate-900/90"
+        : "border-amber-400/25 bg-gradient-to-br from-amber-950/15 via-[#071328] to-slate-900/90"
+    }`}>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Radial SVG Circular Quest Progress Ring */}
+          <div className="relative shrink-0 flex items-center justify-center">
+            <svg className="w-11 h-11 -rotate-90 transform" viewBox="0 0 52 52">
+              <circle cx="26" cy="26" r={r} fill="none" stroke="rgba(255, 255, 255, 0.06)" strokeWidth="3.5" />
+              <circle
+                cx="26"
+                cy="26"
+                r={r}
+                fill="none"
+                stroke={challengeInfo.completed ? "#10b981" : "#f59e0b"}
+                strokeWidth="3.5"
+                strokeDasharray={c}
+                strokeDashoffset={offset}
+                strokeLinecap="round"
+                className="transition-all duration-700"
+                style={{ filter: `drop-shadow(0 0 4px ${challengeInfo.completed ? "#10b981" : "#f59e0b"})` }}
+              />
+            </svg>
+            <span className="absolute">
+              <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v1.5M3 21v-6m0 0 2.77-.693a9 9 0 0 1 6.208.682l.108.054a9 9 0 0 0 6.086.71l3.114-.732a48.524 48.524 0 0 1-.005-10.499l-3.11.732a9 9 0 0 1-6.085-.711l-.108-.054a9 9 0 0 0-6.208-.682L3 4.5M3 15V4.5" />
+              </svg>
+            </span>
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] uppercase font-bold tracking-wider text-amber-400">Weekly Quest</span>
+              {challengeInfo.completed && (
+                <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 text-[8px] font-bold">
+                  COMPLETED
+                </span>
+              )}
+            </div>
+            <h4 className="text-xs sm:text-sm font-bold text-white truncate" suppressHydrationWarning>{challengeInfo.challenge.title}</h4>
+          </div>
+        </div>
+
+        {/* Minimalist XP Tag */}
+        <div className="px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-400/25 text-amber-300 text-[11px] font-mono font-bold tracking-tight shrink-0">
+          +{XP_REWARDS.CHALLENGE_COMPLETED} XP
+        </div>
+      </div>
+
+      <p className="text-[10px] text-slate-300 leading-snug mb-2.5" suppressHydrationWarning>
+        {challengeInfo.challenge.description}
+      </p>
+
+      {/* Progress track */}
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 flex-1 rounded-full bg-white/10 overflow-hidden">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${
+              challengeInfo.completed ? "bg-emerald-400" : "bg-gradient-to-r from-amber-400 to-orange-400"
+            }`}
+            style={{ width: `${Math.max(4, challengeInfo.progress * 100)}%` }}
+          />
+        </div>
+        <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0">
+          {Math.round(challengeInfo.progress * 100)}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Recent Activity Quick Repeat Widget ── */
+function RecentActivityWidget({
+  workouts,
+  loading,
+  onStartHistory,
+  onNavigateHistory,
+  onQuickStart,
+}: {
+  workouts: SupabaseWorkout[];
+  loading: boolean;
+  onStartHistory: (w: SupabaseWorkout) => void;
+  onNavigateHistory: () => void;
+  onQuickStart: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#38bdf8]" />
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">
+            Recent Sessions
+          </h3>
+        </div>
+        <button
+          type="button"
+          onClick={onNavigateHistory}
+          className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
+        >
+          <span>Full History ({workouts.length})</span>
+          <span className="group-hover-arrow">→</span>
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {loading ? (
+          <div className="liquid-glass rounded-2xl p-4 border border-white/10 flex items-center justify-center gap-2 text-xs text-slate-400">
+            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
+            <span>Loading history...</span>
+          </div>
+        ) : workouts.length === 0 ? (
+          <div className="liquid-glass rounded-2xl p-4 border border-white/10 text-center space-y-2">
+            <p className="text-xs font-bold text-slate-300">Ready for your first session</p>
+            <p className="text-[10px] text-slate-400">
+              Start a workout to track volume, load, and telemetry here.
+            </p>
+            <button
+              type="button"
+              onClick={onQuickStart}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 hover:text-white border border-sky-500/30 text-[11px] font-bold transition-all button-press"
+            >
+              <span>Quick Workout</span>
+              <span>→</span>
+            </button>
+          </div>
+        ) : (
+          workouts.slice(0, 2).map((w, idx) => {
+            const durationMins = Math.max(1, Math.round((w.duration_seconds || 0) / 60));
+            const exNames = (w.exercises || []).map((e) => e.name);
+            return (
+              <div
+                key={w.id || idx}
+                onClick={onNavigateHistory}
+                className="liquid-glass card-hover-lift shimmer-hover cursor-pointer rounded-2xl p-3 border border-white/10 hover:border-sky-400/40 transition-all space-y-1.5 group"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h4 className="text-xs font-black text-white group-hover:text-cyan-300 transition-colors">
+                      {w.day_title}
+                    </h4>
+                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                      {formatDashboardDate(w.created_at)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="liquid-pill px-1.5 py-0.5 rounded text-[9px] font-bold text-sky-300">
+                      {durationMins}m
+                    </span>
+                    <span className="liquid-pill px-1.5 py-0.5 rounded text-[9px] font-bold text-teal-300">
+                      {w.completed_sets} sets
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/[0.05]">
+                  <p className="text-[10px] text-slate-400 truncate max-w-[180px] sm:max-w-[220px]">
+                    {exNames.length > 0 ? exNames.slice(0, 3).join(" • ") + (exNames.length > 3 ? ` +${exNames.length - 3}` : "") : "Workout session"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onStartHistory(w);
+                    }}
+                    className="liquid-pill flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-cyan-300 hover:text-white border-cyan-500/30 hover:border-cyan-400 rounded-lg transition-all button-press shrink-0"
+                    title="Repeat this workout with pre-filled weights"
+                  >
+                    <svg className="h-3 w-3 text-cyan-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    <span>Repeat</span>
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ── Floating XP Toast Component ── */
+function XPToastOverlay({ toasts }: { toasts: { id: string; text: string; isPR?: boolean; x?: number; y?: number }[] }) {
+  return (
+    <div className="fixed inset-0 pointer-events-none z-[80]">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className="absolute animate-xp-float"
+          style={{
+            left: t.x ? `${t.x}px` : "50%",
+            top: t.y ? `${t.y}px` : "40%",
+            transform: "translateX(-50%)",
+          }}
+        >
+          <div className={`px-3 py-1.5 rounded-xl font-black text-sm shadow-xl backdrop-blur-md ${
+            t.isPR
+              ? "bg-amber-500/30 border border-amber-400/60 text-amber-200 shadow-amber-500/20"
+              : "bg-cyan-500/25 border border-cyan-400/50 text-cyan-200 shadow-cyan-500/20"
+          }`}>
+            {t.text}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Confetti Overlay ── */
+function ConfettiOverlay({ active }: { active: boolean }) {
+  const [particles, setParticles] = useState<ReturnType<typeof generateConfettiParticles>>([]);
+
+  useEffect(() => {
+    if (active) {
+      setParticles(generateConfettiParticles(50));
+    }
+  }, [active]);
+
+  if (!active || particles.length === 0) return null;
+
+  return (
+    <div className="fixed inset-0 pointer-events-none z-[90] overflow-hidden">
+      {particles.map((p) => (
+        <div
+          key={p.id}
+          className="absolute animate-confetti"
+          style={{
+            left: `${p.x}%`,
+            top: `${p.y}%`,
+            animationDelay: `${p.delay}s`,
+            transform: `rotate(${p.rotation}deg) scale(${p.scale})`,
+          }}
+        >
+          <div
+            style={{
+              width: "10px",
+              height: "10px",
+              backgroundColor: p.color,
+              borderRadius: Math.random() > 0.5 ? "50%" : "2px",
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
    Minimalist Executive Fitness Dashboard
    ═══════════════════════════════════════════════════════════════ */
 function DashboardTab({
@@ -3953,6 +5930,11 @@ function DashboardTab({
   exerciseHistory,
   userTemplates,
   unit = "lbs",
+  gamificationStats,
+  onNavigateProfile,
+  aiPlan,
+  onStartPlanDay,
+  isMainPlanActive,
 }: {
   onNavigateTab: (t: HomeTab) => void;
   onQuickStart: () => void;
@@ -3963,6 +5945,11 @@ function DashboardTab({
   exerciseHistory: Record<string, ExerciseHistoryItem[]>;
   userTemplates: WorkoutTemplate[];
   unit?: "lbs" | "kg";
+  gamificationStats: GamificationStats;
+  onNavigateProfile?: () => void;
+  aiPlan?: WorkoutDay[] | null;
+  onStartPlanDay?: (day: WorkoutDay) => void;
+  isMainPlanActive?: boolean;
 }) {
   const { isLoaded: userLoaded, isSignedIn, user } = useUser();
   const [workouts, setWorkouts] = useState<SupabaseWorkout[]>([]);
@@ -4020,20 +6007,59 @@ function DashboardTab({
     return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3);
   }, [exerciseHistory]);
 
-  const spotlightExercises = useMemo(() => {
-    const ids = ["lib-bench-press", "lib-back-squat", "lib-lat-pulldown"];
-    return EXERCISE_LIBRARY.filter((ex) => ids.includes(ex.id)).slice(0, 3);
-  }, []);
+  const [selectedDayForModal, setSelectedDayForModal] = useState<ScheduleDayItem | null>(null);
 
-  const weeklySchedule = useMemo(() => {
+  async function handleSaveDayWorkout(workoutPayload: Partial<SupabaseWorkout>) {
+    const uid = isSignedIn && user?.id ? user.id : "guest";
+    const fullWorkout: SupabaseWorkout = {
+      user_id: uid,
+      day_title: workoutPayload.day_title || "Workout Session",
+      duration_seconds: workoutPayload.duration_seconds || 45 * 60,
+      completed_sets: workoutPayload.completed_sets || 12,
+      total_sets: workoutPayload.total_sets || workoutPayload.completed_sets || 12,
+      exercises: (workoutPayload.exercises as any) || [],
+      calories: workoutPayload.calories || 300,
+      unit,
+      created_at: workoutPayload.created_at || new Date().toISOString(),
+    };
+
+    const res = await saveWorkoutToSupabase(fullWorkout);
+    const saved = res.data || fullWorkout;
+
+    setWorkouts((prev) => [saved, ...prev.filter((w) => w.id !== saved.id)]);
+
+    recordWorkoutCompletion({
+      completedSets: fullWorkout.completed_sets,
+      totalVolume: fullWorkout.completed_sets * 150,
+      prsHit: 0,
+      bestCombo: 0,
+    });
+
+    setSelectedDayForModal(null);
+  }
+
+  async function handleDeleteDayWorkout(workoutId: string) {
+    const uid = isSignedIn && user?.id ? user.id : "guest";
+    await deleteWorkoutFromSupabase(workoutId, uid);
+    setWorkouts((prev) => prev.filter((w) => w.id !== workoutId));
+    setSelectedDayForModal(null);
+  }
+
+  const weeklySchedule: ScheduleDayItem[] = useMemo(() => {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+
+    const planDay1 = aiPlan && aiPlan[0] ? aiPlan[0] : null;
+    const planDay2 = aiPlan && aiPlan[1] ? aiPlan[1] : null;
+    const planDay3 = aiPlan && aiPlan[2] ? aiPlan[2] : null;
+
     const daysConfig = [
-      { dayKey: 1, day: "Mon", title: "Push" },
-      { dayKey: 2, day: "Tue", title: "Pull" },
-      { dayKey: 3, day: "Wed", title: "Recovery" },
-      { dayKey: 4, day: "Thu", title: "Legs" },
-      { dayKey: 5, day: "Fri", title: "Upper" },
-      { dayKey: 6, day: "Sat", title: "Conditioning" },
-      { dayKey: 0, day: "Sun", title: "Mobility" },
+      { dayKey: 1, day: "Mon", dayFull: "Monday", exercises: planDay1?.exercises },
+      { dayKey: 2, day: "Tue", dayFull: "Tuesday" },
+      { dayKey: 3, day: "Wed", dayFull: "Wednesday", exercises: planDay2?.exercises },
+      { dayKey: 4, day: "Thu", dayFull: "Thursday" },
+      { dayKey: 5, day: "Fri", dayFull: "Friday", exercises: planDay3?.exercises },
+      { dayKey: 6, day: "Sat", dayFull: "Saturday" },
+      { dayKey: 0, day: "Sun", dayFull: "Sunday" },
     ];
 
     const now = new Date();
@@ -4046,34 +6072,77 @@ function DashboardTab({
     currentMonday.setDate(now.getDate() + diffToMonday);
     currentMonday.setHours(0, 0, 0, 0);
 
-    const workoutDates = new Set(
-      workouts
-        .map((w) => (w.created_at ? new Date(w.created_at).toDateString() : null))
-        .filter(Boolean)
-    );
-
     return daysConfig.map((item) => {
       const normalizedDay = item.dayKey === 0 ? 7 : item.dayKey;
       const dayDate = new Date(currentMonday);
       dayDate.setDate(currentMonday.getDate() + (normalizedDay - 1));
-      const isCompleted = workoutDates.has(dayDate.toDateString());
+
+      const dateFormatted = `${monthNames[dayDate.getMonth()]} ${dayDate.getDate()}`;
+
+      // Match workouts on this exact calendar date
+      const matchedWorkouts = workouts.filter((w) => {
+        if (!w.created_at) return false;
+        const wDate = new Date(w.created_at);
+        return (
+          wDate.getFullYear() === dayDate.getFullYear() &&
+          wDate.getMonth() === dayDate.getMonth() &&
+          wDate.getDate() === dayDate.getDate()
+        );
+      });
+
+      const hasLogged = matchedWorkouts.length > 0;
+      const primaryLogged = hasLogged ? matchedWorkouts[0] : null;
+
+      const isToday = normalizedDay === normalizedToday;
+      const isPast = normalizedDay < normalizedToday;
 
       let status: "completed" | "today" | "upcoming";
-      if (isCompleted) {
+      if (hasLogged) {
         status = "completed";
-      } else if (normalizedDay === normalizedToday) {
+      } else if (isToday) {
         status = "today";
       } else {
         status = "upcoming";
       }
 
+      let displayTitle = "—";
+      let displaySubtitle = "";
+
+      if (primaryLogged) {
+        displayTitle = primaryLogged.day_title || "Workout";
+        const durMins = Math.round((primaryLogged.duration_seconds || 0) / 60);
+        if (primaryLogged.completed_sets && primaryLogged.completed_sets > 0) {
+          displaySubtitle = `${primaryLogged.completed_sets} sets${durMins > 0 ? ` • ${durMins}m` : ""}`;
+        } else {
+          displaySubtitle = durMins > 0 ? `${durMins}m` : "Logged";
+        }
+      } else if (isToday) {
+        displayTitle = "Unlogged";
+        displaySubtitle = "+ Log";
+      } else if (isPast) {
+        displayTitle = "—";
+        displaySubtitle = "No Log";
+      } else {
+        displayTitle = "—";
+        displaySubtitle = "Upcoming";
+      }
+
       return {
         day: item.day,
-        title: item.title,
+        dayFull: item.dayFull,
+        dayKey: item.dayKey,
+        dateString: dayDate.toISOString().split("T")[0],
+        dateFormatted,
+        dayDate,
+        title: displayTitle,
+        subtitle: displaySubtitle,
+        type: (primaryLogged ? "workout" : "rest") as "workout" | "rest",
         status,
+        loggedWorkout: primaryLogged,
+        exercises: item.exercises,
       };
     });
-  }, [workouts]);
+  }, [workouts, aiPlan]);
 
   // Top 4 curated templates for quick launch
   const topTemplates = useMemo(() => {
@@ -4081,399 +6150,182 @@ function DashboardTab({
     return list.slice(0, 4);
   }, [userTemplates]);
 
+  // Active weekly gamification quest
+  const challengeInfo = useMemo(() => getActiveChallenge(gamificationStats), [gamificationStats]);
+
   return (
     <div className="animate-[fadeInUp_0.3s_ease-out_both] space-y-5">
-      {/* ── 1. Header Bar ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1 border-b border-white/[0.06] animate-fade-in-down">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
-            Training <span className="bg-gradient-to-r from-sky-400 via-cyan-300 to-teal-300 bg-clip-text text-transparent">Command Center</span>
-          </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {isSignedIn && user?.firstName
-              ? `Welcome back, ${user.firstName}! Track sessions, log PRs, and reach your goals.`
-              : "Intelligent fitness studio & live workout tracker."}
-          </p>
+      {/* ── 1. Creative Centerpiece: Athlete Performance Analytics Hub & Muscle Heatmap ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-stretch">
+        {/* Left: Athlete Performance Analytics Hub (7 cols) */}
+        <div className="lg:col-span-7">
+          <AthletePerformanceAnalyticsHub
+            stats={gamificationStats}
+            userName={isSignedIn && user?.firstName ? user.firstName : null}
+            onNavigateProfile={onNavigateProfile}
+            onQuickStart={onQuickStart}
+            onOpenLogToday={() => {
+              const todayItem = weeklySchedule.find((s) => s.status === "today");
+              setSelectedDayForModal(todayItem || weeklySchedule[0]);
+            }}
+            workouts={workouts}
+            weeklySchedule={weeklySchedule}
+          />
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onQuickStart}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 text-white font-bold text-xs shadow-md shadow-cyan-500/20 hover:opacity-95 transition-opacity button-press"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
-            </svg>
-            <span>Start Session</span>
-          </button>
+        {/* Right: Muscle Stimulation Intensity Graphic (5 cols) */}
+        <div className="lg:col-span-5">
+          <MuscleDistributionGraphic
+            workouts={workouts}
+            onQuickStart={onQuickStart}
+          />
         </div>
       </div>
 
-      {/* ── Welcome Banner for New Users (0 Workouts Logged) ── */}
-      {workouts.length === 0 && !loadingWorkouts && (
-        <div className="relative overflow-hidden rounded-3xl border border-sky-400/30 bg-gradient-to-br from-sky-950/60 via-[#06142a]/80 to-teal-950/40 p-4 sm:p-7 shadow-2xl animate-fade-in-up">
-          <div aria-hidden className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-cyan-500/20 blur-3xl" />
-          <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-5">
-            <div className="space-y-1.5 sm:space-y-2 max-w-xl">
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-500/10 px-2.5 py-0.5 text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-300">
-                <span>Tailored For You</span>
-              </div>
-              <h2 className="text-lg sm:text-2xl font-black text-white tracking-tight">
-                Welcome to Fostura{isSignedIn && user?.firstName ? `, ${user.firstName}` : ""}
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                Your intelligent performance studio is ready. Generate a tailored AI routine based on your equipment, start with a blueprint template, or track live sets with plate calculators.
-              </p>
-            </div>
+      {/* ── 2. Visual Weekly Progress & Activity Log ── */}
+      <VisualMicrocycleTrack
+        schedule={weeklySchedule}
+        onStartToday={onQuickStart}
+        onSelectDay={(dayItem) => setSelectedDayForModal(dayItem)}
+        onOpenLogToday={() => {
+          const todayItem = weeklySchedule.find((s) => s.status === "today");
+          setSelectedDayForModal(todayItem || weeklySchedule[0]);
+        }}
+      />
 
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5 w-full sm:w-auto shrink-0">
-              <button
-                type="button"
-                onClick={() => onNavigateTab("ai")}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 hover:opacity-95 transition-opacity button-press"
-              >
-                <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z" />
-                </svg>
-                <span>Generate AI Routine</span>
-              </button>
-              <button
-                type="button"
-                onClick={onQuickStart}
-                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white font-bold text-xs transition-all button-press"
-              >
-                <svg className="h-4 w-4 text-cyan-400 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m3.75 13.5 10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
-                </svg>
-                <span>Quick Workout</span>
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Log Day Activity Modal */}
+      {selectedDayForModal && (
+        <LogDayActivityModal
+          dayItem={selectedDayForModal}
+          onSaveWorkout={handleSaveDayWorkout}
+          onDeleteWorkout={handleDeleteDayWorkout}
+          onStartLiveSession={(title, exercises) => {
+            if (onStartPlanDay) {
+              onStartPlanDay({ day: title, exercises: exercises || [] });
+            } else {
+              onQuickStart();
+            }
+          }}
+          onClose={() => setSelectedDayForModal(null)}
+          unit={unit}
+        />
       )}
 
-      {/* ── 2. Unified Streamlined 4-Stat Strip (Real dynamic data) ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3.5 xl:gap-4">
-        {/* Total Workouts */}
-        <div className="liquid-glass card-hover-lift shimmer-hover rounded-2xl p-3.5 sm:p-4 border border-white/10 flex flex-col justify-between animate-fade-in-up stagger-1 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-slate-400 truncate">Workouts</span>
-            <span className="text-[9px] sm:text-[10px] font-bold text-sky-400 shrink-0">{workouts.length > 0 ? `${workouts.length} tot` : "Day 1"}</span>
-          </div>
-          <div className="mt-1">
-            <span className="text-xl sm:text-2xl font-black text-white">
-              {workouts.length}
-            </span>
-            <span className="text-xs font-bold text-sky-400 ml-1">
-              {workouts.length === 1 ? "Session" : "Sessions"}
-            </span>
-          </div>
-          <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 truncate">
-            {workouts.length > 0
-              ? `${workouts.length} completed`
-              : "Ready for first workout"}
-          </p>
-        </div>
+      {/* ── 3. Visual Protocols Grid & Interactive Sidekick ── */}
+      <div className="grid gap-5 lg:grid-cols-12 xl:gap-6 items-start">
+        {/* Left Column: Vibrant Gradient-Mesh Routine Protocols (7 cols) */}
+        <div className="lg:col-span-7 space-y-3.5">
+          {/* Active Main Workout Program Card (when saved) */}
+          {aiPlan && isMainPlanActive && (
+            <div className="p-4 rounded-3xl liquid-glass border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 via-cyan-500/5 to-transparent space-y-3 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]" />
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-wider text-white">
+                      Active Main Workout Program
+                    </h3>
+                    <p className="text-[10px] text-slate-400">Scheduled 3-day weekly routine</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigateTab("ai")}
+                  className="text-[10px] font-bold text-cyan-300 hover:text-white transition-colors"
+                >
+                  Manage Routine →
+                </button>
+              </div>
 
-        {/* Body Weight */}
-        <div
-          onClick={() => onNavigateTab("metrics")}
-          className="liquid-glass card-hover-lift shimmer-hover liquid-glass-interactive cursor-pointer rounded-2xl p-3.5 sm:p-4 border border-white/10 flex flex-col justify-between animate-fade-in-up stagger-2 min-w-0"
-        >
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-slate-400 truncate">Body Weight</span>
-            <span className="liquid-pill px-1.5 py-0.2 text-[9px] font-bold text-teal-300 rounded shrink-0">
-              {latestMetric ? "Calibrated" : "Track"}
-            </span>
-          </div>
-          <div className="mt-1">
-            <span className="text-xl sm:text-2xl font-black text-white">{displayWeight !== null ? displayWeight : "—"}</span>
-            <span className="text-xs font-bold text-teal-400 ml-1">{unit}</span>
-          </div>
-          <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 truncate">
-            {latestMetric
-              ? displayDelta !== 0
-                ? `${displayDelta > 0 ? "+" : ""}${displayDelta} ${unit} delta`
-                : "Baseline calibrated"
-              : "Set weight in Metrics →"}
-          </p>
-        </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {aiPlan.slice(0, 3).map((day, dIdx) => (
+                  <button
+                    key={dIdx}
+                    type="button"
+                    onClick={() => {
+                      if (onStartPlanDay) onStartPlanDay(day);
+                    }}
+                    className="p-3 rounded-2xl bg-white/[0.03] border border-white/[0.08] hover:border-emerald-400/40 hover:bg-white/[0.06] text-left transition-all button-press group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white group-hover:text-emerald-200 truncate">
+                        {day.day}
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-bold opacity-80 group-hover:opacity-100 shrink-0 ml-1">
+                        Start →
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 truncate mt-1">
+                      {day.exercises.length} exercises
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-        {/* Volume Time */}
-        <div className="liquid-glass card-hover-lift shimmer-hover rounded-2xl p-3.5 sm:p-4 border border-white/10 flex flex-col justify-between animate-fade-in-up stagger-3 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-slate-400 truncate">Training Time</span>
-            <span className="text-[9px] sm:text-[10px] font-bold text-cyan-300 shrink-0">
-              {workouts.length > 0 ? `${Math.min(100, Math.round((totalWorkoutMinutes / 240) * 100))}%` : "0%"}
-            </span>
-          </div>
-          <div className="mt-1">
-            <span className="text-xl sm:text-2xl font-black text-white">
-              {totalWorkoutMinutes}
-            </span>
-            <span className="text-xs font-bold text-cyan-400 ml-1">mins</span>
-          </div>
-          <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 truncate">Target: 240m / week</p>
-        </div>
-
-        {/* Split / Focus */}
-        <div className="liquid-glass card-hover-lift shimmer-hover rounded-2xl p-3.5 sm:p-4 border border-white/10 flex flex-col justify-between animate-fade-in-up stagger-4 min-w-0">
-          <div className="flex items-center justify-between gap-1">
-            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-slate-400 truncate">Training Split</span>
-            <span className="text-[9px] sm:text-[10px] font-bold text-emerald-400 shrink-0">{workouts.length > 0 ? "Active" : "Ready"}</span>
-          </div>
-          <div className="mt-1">
-            <span className="text-sm sm:text-base font-black text-white truncate block">
-              {workouts.length > 0 ? workouts[0].day_title : "Custom Split"}
-            </span>
-          </div>
-          <p className="text-[9px] sm:text-[10px] text-slate-400 mt-0.5 truncate">
-            {workouts.length > 0 ? "Latest logged workout" : "AI Studio & Blueprints"}
-          </p>
-        </div>
-      </div>
-
-      {/* ── 3. Combined Microcycle Tracker & AI Coach Insight Cue (Scroll Reveal) ── */}
-      <ScrollReveal delay={100}>
-        <div className="liquid-glass rounded-2xl p-3.5 sm:p-5 border border-white/10 space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="text-xs sm:text-sm font-extrabold text-white">Weekly Microcycle</span>
-              <span className="text-[10px] text-slate-400">• Mon–Sun</span>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_8px_#38bdf8]" />
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-200">
+                Quick Launch Protocols
+              </h3>
             </div>
             <button
               type="button"
-              onClick={onQuickStart}
-              className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors flex items-center gap-1 button-press group shrink-0"
+              onClick={() => onNavigateTab("templates")}
+              className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors flex items-center gap-1 group"
             >
-              <span>Start Today</span>
+              <span>All Blueprints ({topTemplates.length})</span>
               <span className="group-hover-arrow">→</span>
             </button>
           </div>
 
-          {/* 7-Day Microcycle Strip (Horizontal Scroll on Mobile, Grid on Tablet/Desktop) */}
-          <div className="flex overflow-x-auto gap-2 sm:grid sm:grid-cols-7 sm:gap-2.5 xl:gap-3.5 no-scrollbar pb-1 pt-0.5 scroll-smooth">
-            {weeklySchedule.map((item, idx) => (
-              <div
-                key={idx}
-                className={`min-w-[74px] sm:min-w-0 flex-1 shrink-0 sm:shrink rounded-xl p-2.5 sm:p-3 text-center border card-hover-lift button-press ${
-                  item.status === "today"
-                    ? "border-cyan-400/70 bg-cyan-950/40 ring-1 ring-cyan-400/40 shadow-sm shadow-cyan-500/20"
-                    : item.status === "completed"
-                    ? "border-sky-500/30 bg-sky-950/20"
-                    : "border-white/5 bg-white/[0.02]"
-                }`}
-              >
-                <div className="flex items-center justify-center gap-1">
-                  <span className="text-xs font-bold text-white">{item.day}</span>
-                  {item.status === "completed" && (
-                    <span className="text-cyan-400 text-[10px] font-black animate-check-pop">✓</span>
-                  )}
-                  {item.status === "today" && (
-                    <span className="flex h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#38bdf8]" />
-                  )}
-                </div>
-                <p className={`text-[10px] sm:text-[11px] font-bold mt-1 block truncate ${item.status === "today" ? "text-cyan-300 font-extrabold" : "text-slate-400"}`}>
-                  {item.title}
-                </p>
-              </div>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            {topTemplates.map((tmpl, idx) => (
+              <GraphicalRoutineCard
+                key={tmpl.id}
+                template={tmpl}
+                index={idx}
+                onStart={() => onStartTemplate(tmpl)}
+              />
             ))}
           </div>
-
-          {/* Responsive AI Cue Footer (Multi-line friendly for Mobile) */}
-          <div className="pt-2.5 border-t border-white/[0.06] flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-300">
-            <div className="flex items-start sm:items-center gap-2 min-w-0">
-              <span className="liquid-pill px-1.5 py-0.5 rounded text-[9px] font-bold text-cyan-300 uppercase shrink-0 animate-subtle-pulse mt-0.5 sm:mt-0">
-                AI Cue
-              </span>
-              <p className="text-[11px] text-slate-300 font-medium leading-relaxed">
-                {workouts.length > 0
-                  ? "Great momentum! Target progressive overload (+2.5 lbs or +1 rep) on primary compound movements."
-                  : "Welcome! Choose a quick launch blueprint below or synthesize a personalized 3-day split in AI Studio."}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onNavigateTab("ai")}
-              className="text-[11px] font-bold text-sky-400 hover:text-white shrink-0 self-end sm:self-auto button-press flex items-center gap-1 group"
-            >
-              <span>Custom Routine</span>
-              <span className="group-hover-arrow">→</span>
-            </button>
-          </div>
         </div>
-      </ScrollReveal>
 
-      {/* ── 4. Main Two-Column Hub (Workouts on Left, History & Telemetry on Right) ── */}
-      <ScrollReveal delay={200}>
-        <div className="grid gap-5 lg:grid-cols-12 xl:gap-6 items-start">
-          {/* Left Column: Quick Launch Blueprints */}
-          <div className="lg:col-span-7 xl:col-span-7 2xl:col-span-8 space-y-3.5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Quick Launch Routines</h3>
-              <button
-                type="button"
-                onClick={() => onNavigateTab("templates")}
-                className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
-              >
-                <span>All Templates ({userTemplates.length + EXAMPLE_TEMPLATES.length})</span>
-                <span className="group-hover-arrow">→</span>
-              </button>
-            </div>
+        {/* Right Column: Visual Quest, Load Wave & Recent Sessions (5 cols) */}
+        <div className="lg:col-span-5 space-y-4">
+          {/* Visual RPG Quest Crest */}
+          {challengeInfo && (
+            <VisualQuestCrest challengeInfo={challengeInfo} />
+          )}
 
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
-              {topTemplates.map((tmpl) => (
-                <div
-                  key={tmpl.id}
-                  className="liquid-glass card-hover-lift shimmer-hover rounded-2xl p-4 border border-white/10 hover:border-sky-400/40 transition-all flex flex-col justify-between group"
-                >
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <span className="liquid-pill px-2 py-0.5 text-[9px] font-bold uppercase text-sky-300 rounded">
-                        {tmpl.category}
-                      </span>
-                      <span className="text-[10px] font-mono text-slate-400">{tmpl.exercises.length} Exercises</span>
-                    </div>
-                    <h4 className="text-sm font-extrabold text-white mt-2 group-hover:text-sky-300 transition-colors">
-                      {tmpl.name}
-                    </h4>
-                    <p className="text-[10px] text-slate-400 mt-0.5 line-clamp-1">
-                      {tmpl.exercises.map((e) => e.name).slice(0, 3).join(", ")}
-                    </p>
-                  </div>
+          {/* Recent Activity Quick Repeat */}
+          <RecentActivityWidget
+            workouts={workouts}
+            loading={loadingWorkouts}
+            onStartHistory={onStartHistoryWorkout}
+            onNavigateHistory={() => onNavigateTab("history")}
+            onQuickStart={onQuickStart}
+          />
 
+            {/* Recent Performance Telemetry (rendered only when telemetry records exist) */}
+            {allSessions.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Exercise Lifts Telemetry</h3>
                   <button
                     type="button"
-                    onClick={() => onStartTemplate(tmpl)}
-                    className="mt-3 w-full py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 hover:text-white border border-sky-500/30 text-xs font-bold transition-all button-press flex items-center justify-center gap-1 group/btn"
+                    onClick={() => onNavigateTab("metrics")}
+                    className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
                   >
-                    <span>Start Workout</span>
-                    <span className="group-hover/btn:translate-x-1 transition-transform">→</span>
+                    <span>Full Analytics</span>
+                    <span className="group-hover-arrow">→</span>
                   </button>
                 </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Right Column: Workout History & Telemetry */}
-          <div className="lg:col-span-5 xl:col-span-5 2xl:col-span-4 space-y-4">
-            {/* Recent Workout History Section */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shadow-[0_0_6px_#38bdf8]" />
-                  <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-200">
-                    Recent Workout History
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onNavigateTab("history")}
-                  className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
-                >
-                  <span>Full History ({workouts.length})</span>
-                  <span className="group-hover-arrow">→</span>
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {loadingWorkouts ? (
-                  <div className="liquid-glass rounded-2xl p-4 border border-white/10 flex items-center justify-center gap-2 text-xs text-slate-400">
-                    <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
-                    <span>Loading history...</span>
-                  </div>
-                ) : workouts.length === 0 ? (
-                  <div className="liquid-glass rounded-2xl p-4 border border-white/10 text-center space-y-2">
-                    <p className="text-xs font-bold text-slate-300">No workout logs recorded yet</p>
-                    <p className="text-[10px] text-slate-400">
-                      Complete your first workout to track duration, volume, and sets here.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={onQuickStart}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 hover:text-white border border-sky-500/30 text-[11px] font-bold transition-all button-press"
-                    >
-                      <span>Start Quick Workout</span>
-                      <span>→</span>
-                    </button>
-                  </div>
-                ) : (
-                  workouts.slice(0, 3).map((w, idx) => {
-                    const durationMins = Math.max(1, Math.round((w.duration_seconds || 0) / 60));
-                    const exNames = (w.exercises || []).map((e) => e.name);
-                    return (
-                      <div
-                        key={w.id || idx}
-                        onClick={() => onNavigateTab("history")}
-                        className="liquid-glass card-hover-lift shimmer-hover cursor-pointer rounded-2xl p-3 border border-white/10 hover:border-sky-400/40 transition-all space-y-1.5 group"
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <h4 className="text-xs font-black text-white group-hover:text-cyan-300 transition-colors">
-                              {w.day_title}
-                            </h4>
-                            <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                              {formatDashboardDate(w.created_at)}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span className="liquid-pill px-1.5 py-0.5 rounded text-[9px] font-bold text-sky-300">
-                              {durationMins}m
-                            </span>
-                            <span className="liquid-pill px-1.5 py-0.5 rounded text-[9px] font-bold text-teal-300">
-                              {w.completed_sets} sets
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-white/[0.05]">
-                          <p className="text-[10px] text-slate-400 truncate max-w-[180px] sm:max-w-[220px]">
-                            {exNames.length > 0 ? exNames.slice(0, 3).join(" • ") + (exNames.length > 3 ? ` +${exNames.length - 3}` : "") : "Workout session"}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onStartHistoryWorkout(w);
-                            }}
-                            className="liquid-pill flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-cyan-300 hover:text-white border-cyan-500/30 hover:border-cyan-400 rounded-lg transition-all button-press shrink-0"
-                            title="Repeat this workout with pre-filled weights"
-                          >
-                            <svg className="h-3 w-3 text-cyan-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-                            </svg>
-                            <span>Repeat</span>
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* Recent Performance Telemetry */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Exercise Lifts Telemetry</h3>
-                <button
-                  type="button"
-                  onClick={() => onNavigateTab("metrics")}
-                  className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
-                >
-                  <span>Full Analytics</span>
-                  <span className="group-hover-arrow">→</span>
-                </button>
-              </div>
-
-              <div className="liquid-glass rounded-2xl p-3 border border-white/10 space-y-1.5">
-                {allSessions.length === 0 ? (
-                  <div className="py-3 text-center text-xs text-slate-400">
-                    No exercise PRs recorded yet. Start a session to see telemetry!
-                  </div>
-                ) : (
-                  allSessions.map((s) => (
+                <div className="liquid-glass rounded-2xl p-3 border border-white/10 space-y-1.5">
+                  {allSessions.map((s) => (
                     <div
                       key={s.id}
                       className="flex items-center justify-between rounded-xl bg-white/[0.02] border border-white/5 px-2.5 py-2 text-xs card-hover-lift transition-all hover:bg-white/[0.05]"
@@ -4489,43 +6341,12 @@ function DashboardTab({
                         <p className="text-[9px] text-slate-400">{s.setsCount} sets</p>
                       </div>
                     </div>
-                  ))
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* Quick Exercise Spotlight */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-400">Exercise Library Spotlight</h3>
-                <button
-                  type="button"
-                  onClick={() => onNavigateTab("exercises")}
-                  className="text-[11px] font-bold text-sky-400 hover:text-white transition-colors group flex items-center gap-1"
-                >
-                  <span>A–Z Library (77)</span>
-                  <span className="group-hover-arrow">→</span>
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-1.5">
-                {spotlightExercises.map((ex) => (
-                  <div
-                    key={ex.id}
-                    onClick={() => onSelectExercise(ex)}
-                    className="liquid-glass card-hover-lift shimmer-hover cursor-pointer rounded-xl p-2 border border-white/10 text-center hover:border-cyan-400/40 transition-all group button-press"
-                  >
-                    <p className="text-[11px] font-extrabold text-white group-hover:text-cyan-300 truncate transition-colors">
-                      {ex.name}
-                    </p>
-                    <span className="text-[9px] font-semibold text-slate-400 block mt-0.5">{ex.bodyPart}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
         </div>
-      </ScrollReveal>
     </div>
   );
 }
@@ -4627,7 +6448,9 @@ function HistoryTab({
             className="liquid-pill flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border-white/10 text-xs font-bold text-slate-300 hover:text-white transition-all button-press"
           >
             <span>Full Page View</span>
-            <span className="text-cyan-400">↗</span>
+            <svg className="h-3.5 w-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 19.5 15-15m0 0H8.25m11.25 0v11.25" />
+            </svg>
           </Link>
           <button
             type="button"
@@ -4739,13 +6562,13 @@ function HistoryTab({
                   <div className="flex items-center justify-between sm:justify-end gap-3 flex-wrap">
                     <div className="flex items-center gap-2">
                       <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-slate-300 rounded-lg">
-                        ⏱ {formatDuration(w.duration_seconds)}
+                        {formatDuration(w.duration_seconds)}
                       </span>
                       <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-teal-300 rounded-lg">
-                        ✓ {w.completed_sets}/{w.total_sets} sets
+                        {w.completed_sets}/{w.total_sets} sets
                       </span>
                       <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-amber-300 rounded-lg">
-                        🔥 {w.calories} kcal
+                        {w.calories} kcal
                       </span>
                     </div>
 
@@ -4831,7 +6654,7 @@ function HistoryTab({
                                   {s.weight ? `${s.weight} ${w.unit}` : "Bodyweight"} × {s.actualReps || s.targetReps} reps
                                 </span>
                                 <span className={s.completed ? "text-emerald-400 font-bold" : "text-slate-500"}>
-                                  {s.completed ? "✓ Done" : "—"}
+                                  {s.completed ? "Done" : "—"}
                                 </span>
                               </div>
                             ))}
@@ -4856,9 +6679,10 @@ function HistoryTab({
    ╚═══════════════════════════════════════════════════════════════╝
    ═══════════════════════════════════════════════════════════════ */
 type AppPhase = "home" | "tracking" | "summary";
-type HomeTab = "dashboard" | "ai" | "quick" | "templates" | "exercises" | "metrics" | "history";
+type HomeTab = "dashboard" | "ai" | "quick" | "templates" | "exercises" | "metrics" | "history" | "trophy";
 
 export default function Home() {
+  const router = useRouter();
   const { isLoaded: userLoaded, isSignedIn } = useUser();
 
   /* ── Sidebar & Navigation state ───────── */
@@ -4867,18 +6691,73 @@ export default function Home() {
   const [showTipJar, setShowTipJar] = useState(false);
   const [isCoachDrawerOpen, setIsCoachDrawerOpen] = useState(false);
 
+  /* ── Gamification state ───────────────── */
+  const [gamificationStats, setGamificationStats] = useState<GamificationStats>(getDefaultStats());
+  const [gamificationResult, setGamificationResult] = useState<GamificationResult | null>(null);
+  const [xpToasts, setXpToasts] = useState<{ id: string; text: string; isPR?: boolean; x?: number; y?: number }[]>([]);
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [comboCounter, setComboCounter] = useState(0);
+  const [bestComboThisWorkout, setBestComboThisWorkout] = useState(0);
+
+  // Refresh gamification stats on mount
+  useEffect(() => {
+    setGamificationStats(loadGamificationStats());
+  }, []);
+
+  // XP toast helper
+  const addXPToast = useCallback((text: string, isPR = false) => {
+    const id = `xp-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
+    setXpToasts((prev) => [...prev, { id, text, isPR }]);
+    setTimeout(() => {
+      setXpToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 1600);
+  }, []);
+
+  // Handle set completion XP
+  const onSetCompleted = useCallback((isComboBreak = false) => {
+    if (isComboBreak) {
+      setComboCounter(0);
+      return;
+    }
+    playSetCompletionSound();
+    setComboCounter((prev) => {
+      const next = prev + 1;
+      setBestComboThisWorkout((best) => Math.max(best, next));
+      if (next >= 3 && next % 3 === 0) {
+        addXPToast(`${next}x Combo!`);
+      }
+      return next;
+    });
+    addXPToast(`+${XP_REWARDS.SET_COMPLETED} XP`);
+  }, [addXPToast]);
+
   /* ── Tab & Form state ─────────────────── */
   const [tab, setTab] = useState<HomeTab>("dashboard");
   const [preferredUnit, setPreferredUnitState] = useState<"lbs" | "kg">("lbs");
   const [goal, setGoal] = useState("");
   const [experience, setExperience] = useState("");
   const [equipment, setEquipment] = useState("");
+  const [splitFormat, setSplitFormat] = useState<string>("Push / Pull / Legs (PPL)");
   const [loading, setLoading] = useState(false);
   const [plan, setPlan] = useState<WorkoutDay[] | null>(null);
+  const [isMainPlanActive, setIsMainPlanActive] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setPreferredUnitState(loadPreferredUnit());
+    const savedPlan = loadAiPlan();
+    if (savedPlan) {
+      setPlan(savedPlan);
+      setIsMainPlanActive(isMainPlanMarked());
+    }
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab") as HomeTab;
+      const validTabs: HomeTab[] = ["dashboard", "ai", "quick", "templates", "exercises", "metrics", "history", "trophy"];
+      if (tabParam && validTabs.includes(tabParam)) {
+        setTab(tabParam);
+      }
+    } catch {}
   }, []);
 
   function setPreferredUnit(u: "lbs" | "kg") {
@@ -4998,12 +6877,15 @@ export default function Home() {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ goal, experience, equipment }),
+        body: JSON.stringify({ goal, experience, equipment, split: splitFormat }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Generation request failed");
       if (!data.plan || !Array.isArray(data.plan)) throw new Error("Unexpected response from AI");
       setPlan(data.plan);
+      saveAiPlan(data.plan);
+      setIsMainPlanActive(false);
+      setMainPlanMarked(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate plan");
     } finally {
@@ -5011,14 +6893,71 @@ export default function Home() {
     }
   }
 
-  function startFromPlan(dayIdx: number) {
-    if (!plan) return;
-    const day = plan[dayIdx];
+  function handleSaveAsMainPlan() {
+    if (!plan || plan.length === 0) return;
+    saveAiPlan(plan);
+    setMainPlanMarked(true);
+    setIsMainPlanActive(true);
+
+    // Persist each day into userTemplates as "Main Program" category so it appears in Templates & Quick Launch
+    const existingTemplates = loadUserTemplates();
+    const newTemplates: WorkoutTemplate[] = plan.map((day, idx) => ({
+      id: `main-plan-day-${idx + 1}-${Date.now()}`,
+      name: day.day,
+      category: "Main Program",
+      exercises: day.exercises,
+    }));
+
+    // Filter out previous "Main Program" templates to avoid duplicates
+    const cleanedTemplates = existingTemplates.filter((t) => t.category !== "Main Program");
+    const updated = [...newTemplates, ...cleanedTemplates];
+    setUserTemplates(updated);
+    saveUserTemplates(updated);
+
+    addXPToast("Saved as Main Workout Plan!");
+  }
+
+  function handleClearMainPlan() {
+    saveAiPlan(null);
+    setMainPlanMarked(false);
+    setIsMainPlanActive(false);
+    setPlan(null);
+
+    const existingTemplates = loadUserTemplates();
+    const cleanedTemplates = existingTemplates.filter((t) => t.category !== "Main Program");
+    setUserTemplates(cleanedTemplates);
+    saveUserTemplates(cleanedTemplates);
+
+    addXPToast("Main Plan Reset");
+  }
+
+  function handleExportDaysToTemplates() {
+    if (!plan || plan.length === 0) return;
+    const existingTemplates = loadUserTemplates();
+    const newTemplates: WorkoutTemplate[] = plan.map((day, idx) => ({
+      id: `custom-template-${idx + 1}-${Date.now()}`,
+      name: day.day,
+      category: "Custom Split",
+      exercises: day.exercises,
+    }));
+    const updated = [...newTemplates, ...existingTemplates];
+    setUserTemplates(updated);
+    saveUserTemplates(updated);
+
+    addXPToast("Exported 3 Days to Templates!");
+  }
+
+  function startFromPlanDay(day: WorkoutDay) {
     setWorkoutTitle(day.day);
     setTrackedExercises(exercisesToTracked(day.exercises));
     setPhase("tracking");
     setMobileDrawerOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startFromPlan(dayIdx: number) {
+    if (!plan || !plan[dayIdx]) return;
+    startFromPlanDay(plan[dayIdx]);
   }
 
   function startFromTemplate(template: WorkoutTemplate) {
@@ -5097,6 +7036,7 @@ export default function Home() {
     const todayStr = new Date().toISOString().split("T")[0];
     const updatedHist = { ...exerciseHistory };
     let hasUpdates = false;
+    let prsHit = 0;
 
     trackedExercises.forEach((tex) => {
       const completed = tex.trackedSets.filter((s) => s.completed && (parseFloat(s.weight) > 0 || s.actualReps));
@@ -5109,7 +7049,14 @@ export default function Home() {
           reps: parseInt(s.actualReps) || parseInt(s.targetReps) || 0,
         }));
 
+        // Check for PRs
         const existingForEx = updatedHist[exKey] || [];
+        const prevMaxWeight = existingForEx.flatMap(h => h.sets).reduce((max, s) => Math.max(max, s.weight), 0);
+        const currentMaxWeight = currentSets.reduce((max, s) => Math.max(max, s.weight), 0);
+        if (currentMaxWeight > prevMaxWeight && currentMaxWeight > 0) {
+          prsHit += 1;
+        }
+
         const sessionEntry: ExerciseHistoryItem = {
           id: uid(),
           date: todayStr,
@@ -5127,12 +7074,42 @@ export default function Home() {
       saveExerciseHistory(updatedHist);
     }
 
+    // ── GAMIFICATION: Record workout completion ──
+    const completedSetsCount = trackedExercises.flatMap((ex) => ex.trackedSets).filter((s) => s.completed).length;
+    const totalVolume = trackedExercises.flatMap((ex) => ex.trackedSets).filter((s) => s.completed).reduce((sum, s) => {
+      const w = parseFloat(s.weight) || 0;
+      const r = parseInt(s.actualReps) || parseInt(s.targetReps) || 0;
+      return sum + w * r;
+    }, 0);
+
+    const gResult = recordWorkoutCompletion({
+      completedSets: completedSetsCount,
+      totalVolume,
+      prsHit,
+      bestCombo: bestComboThisWorkout,
+    });
+
+    setGamificationResult(gResult);
+    setGamificationStats(loadGamificationStats());
+
+    // Trigger confetti
+    setShowConfetti(true);
+    setTimeout(() => setShowConfetti(false), 3500);
+
+    // Level-up fanfare
+    if (gResult.leveledUp) {
+      playLevelUpFanfare();
+    }
+
+    // Reset combo
+    setComboCounter(0);
+    setBestComboThisWorkout(0);
+
     setPhase("summary");
   }
 
   function resetHome() {
     setPhase("home");
-    setPlan(null);
     setTrackedExercises([]);
     setElapsedSeconds(0);
     setGoal("");
@@ -5148,17 +7125,25 @@ export default function Home() {
     if (phase !== "home") setPhase("home");
     setMobileDrawerOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    try {
+      const url = new URL(window.location.href);
+      if (targetTab === "dashboard") {
+        url.searchParams.delete("tab");
+      } else {
+        url.searchParams.set("tab", targetTab);
+      }
+      window.history.pushState({}, "", url.toString());
+    } catch {}
   }
 
   /* ═══════════════════════════════════════════════════════════════
      Sidebar / Tabs Navigation Items
      ═══════════════════════════════════════════════════════════════ */
-  const NAV_ITEMS: { key: HomeTab; label: string; sub: string; badge?: string; icon: React.ReactNode }[] = [
+  const NAV_ITEMS: { key: HomeTab | string; label: string; sub: string; icon: React.ReactNode; href?: string }[] = [
     {
       key: "dashboard",
       label: "Dashboard",
       sub: "Overview & Daily Stats",
-      badge: "Hub",
       icon: (
         <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z" />
@@ -5189,7 +7174,6 @@ export default function Home() {
       key: "templates",
       label: "Templates",
       sub: "Saved Blueprints",
-      badge: `${userTemplates.length + EXAMPLE_TEMPLATES.length}`,
       icon: (
         <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z" />
@@ -5200,7 +7184,6 @@ export default function Home() {
       key: "exercises",
       label: "Exercise Library",
       sub: "A to Z Catalog & Videos",
-      badge: `${EXERCISE_LIBRARY.length}`,
       icon: (
         <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
@@ -5211,7 +7194,6 @@ export default function Home() {
       key: "metrics",
       label: "Body & Metrics",
       sub: "Weight, Fat, Calories, BMI",
-      badge: "Graphs",
       icon: (
         <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
@@ -5222,10 +7204,19 @@ export default function Home() {
       key: "history",
       label: "History",
       sub: "Cloud Logged Sessions",
-      badge: "Cloud",
       icon: (
         <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+      ),
+    },
+    {
+      key: "trophy",
+      label: "Trophy Room",
+      sub: "XP, Badges & Streaks",
+      icon: (
+        <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.504-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.004 0H9.496m5.004 0a5.25 5.25 0 0 0 5.25-5.25v-1.5h-15.5v1.5a5.25 5.25 0 0 0 5.25 5.25m10.25-5.25H21a2.25 2.25 0 0 0 2.25-2.25v-.75a2.25 2.25 0 0 0-2.25-2.25h-1.5M4.5 9H3a2.25 2.25 0 0 0-2.25 2.25v.75A2.25 2.25 0 0 0 3 14.25h1.5" />
         </svg>
       ),
     },
@@ -5342,7 +7333,13 @@ export default function Home() {
                 <button
                   key={item.key}
                   type="button"
-                  onClick={() => navigateToTab(item.key)}
+                  onClick={() => {
+                    if ((item as any).href) {
+                      router.push((item as any).href);
+                    } else {
+                      navigateToTab(item.key as HomeTab);
+                    }
+                  }}
                   className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-xs font-bold transition-all button-press ${
                     active
                       ? "bg-gradient-to-r from-sky-600 via-cyan-600 to-teal-600 text-white shadow-md shadow-sky-500/25 border border-white/20 animate-scale-in"
@@ -5355,18 +7352,7 @@ export default function Home() {
                   </span>
                   {!sidebarCollapsed && (
                     <div className="flex-1 min-w-0 transition-transform duration-200 group-hover:translate-x-0.5">
-                      <div className="flex items-center justify-between">
-                        <span className="truncate">{item.label}</span>
-                        {item.badge && (
-                          <span
-                            className={`liquid-pill px-1.5 py-0.2 text-[9px] font-semibold rounded transition-colors ${
-                              active ? "bg-white/20 text-white" : "text-sky-300 group-hover:text-white"
-                            }`}
-                          >
-                            {item.badge}
-                          </span>
-                        )}
-                      </div>
+                      <span className="block truncate font-bold text-xs">{item.label}</span>
                       <span
                         className={`text-[10px] block truncate mt-0.5 transition-colors ${
                           active ? "text-sky-100 font-medium" : "text-slate-400 font-normal group-hover:text-slate-300"
@@ -5462,7 +7448,14 @@ export default function Home() {
                       <button
                         key={item.key}
                         type="button"
-                        onClick={() => navigateToTab(item.key)}
+                        onClick={() => {
+                          setMobileDrawerOpen(false);
+                          if ((item as any).href) {
+                            router.push((item as any).href);
+                          } else {
+                            navigateToTab(item.key as HomeTab);
+                          }
+                        }}
                         className={`flex w-full items-center gap-3 rounded-xl px-3.5 py-3 text-left text-xs font-bold transition-all ${
                           active
                             ? "bg-gradient-to-r from-sky-600 to-cyan-600 text-white shadow-md"
@@ -5667,6 +7660,11 @@ export default function Home() {
                     exerciseHistory={exerciseHistory}
                     userTemplates={userTemplates}
                     unit={preferredUnit}
+                    gamificationStats={gamificationStats}
+                    onNavigateProfile={() => navigateToTab("trophy")}
+                    aiPlan={plan}
+                    onStartPlanDay={startFromPlanDay}
+                    isMainPlanActive={isMainPlanActive}
                   />
                 )}
 
@@ -5692,20 +7690,19 @@ export default function Home() {
                           <div aria-hidden className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-400/50 to-transparent" />
 
                           <div className="mb-5 flex items-center justify-between">
-                            <div className="flex items-center gap-2.5">
-                              <span className="liquid-pill flex h-7 w-7 items-center justify-center rounded-xl text-sky-300">
-                                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z" />
-                                </svg>
-                              </span>
-                              <h2 className="text-sm font-extrabold text-white">Generate Routine</h2>
+                            <div>
+                              <h2 className="text-sm font-extrabold text-white tracking-tight">Generate Routine</h2>
+                              <p className="text-[10px] text-slate-500">Custom 3-day training split synthesis</p>
                             </div>
-                            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Groq LLM</span>
+                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-lg bg-white/[0.04] text-slate-400 border border-white/[0.06]">
+                              Groq LLM
+                            </span>
                           </div>
 
                           <div className="space-y-5">
                             <FitnessGoalSelector value={goal} onChange={setGoal} />
                             <ExperienceLevelSelector value={experience} onChange={setExperience} />
+                            <RoutineSplitSelector value={splitFormat} onChange={setSplitFormat} />
                             <EquipmentMixSelector value={equipment} onChange={setEquipment} />
                           </div>
 
@@ -5721,10 +7718,10 @@ export default function Home() {
                               </>
                             ) : (
                               <>
-                                <svg className="h-4 w-4 transition-transform group-hover:rotate-12" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.455 2.456L21.75 6l-1.036.259a3.375 3.375 0 0 0-2.455 2.456Z" />
+                                <span>Build 3-Day Plan</span>
+                                <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
                                 </svg>
-                                Build 3-Day Plan
                               </>
                             )}
                           </button>
@@ -5762,11 +7759,104 @@ export default function Home() {
                         )}
 
                         {plan && !loading && (
-                          <div className="space-y-3 animate-fade-in-up">
-                            <div className="flex items-center justify-between px-1">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-400">Custom 3-Day Plan Generated</p>
-                              <span className="text-[10px] text-slate-400">Tap a day to begin</span>
+                          <div className="space-y-3.5 animate-fade-in-up">
+                            {/* Action Bar Header */}
+                            <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-sky-400">
+                                  {isMainPlanActive ? "Active Main Workout Plan" : "Custom 3-Day Plan Generated"}
+                                </p>
+                                {isMainPlanActive ? (
+                                  <span className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.15)]">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                    Active Main Routine
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-0.5 rounded-full text-[9px] font-mono font-bold bg-amber-500/15 border border-amber-400/40 text-amber-300">
+                                    Unsaved Draft
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {!isMainPlanActive ? (
+                                  <button
+                                    type="button"
+                                    onClick={handleSaveAsMainPlan}
+                                    className="liquid-pill flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-400 hover:from-sky-400 hover:to-teal-300 text-white text-xs font-bold shadow-md shadow-cyan-500/20 transition-all button-press"
+                                  >
+                                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
+                                    </svg>
+                                    <span>Save as Main Plan</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 text-xs font-bold shadow-sm shadow-emerald-500/10">
+                                      <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                                      </svg>
+                                      <span>Saved as Main Plan</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={handleExportDaysToTemplates}
+                                      className="liquid-pill px-2.5 py-1.5 rounded-xl text-[10px] font-semibold text-slate-300 hover:text-white border border-white/[0.08] hover:border-white/20 transition-colors"
+                                      title="Export to My Templates"
+                                    >
+                                      Export Days
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={handleClearMainPlan}
+                                      className="text-[10px] text-slate-400 hover:text-rose-400 transition-colors px-1.5 py-1"
+                                      title="Reset main plan"
+                                    >
+                                      Reset
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Informative Guidance Banner */}
+                            {isMainPlanActive ? (
+                              <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 flex items-center justify-between text-xs text-emerald-200 animate-fade-in shadow-inner">
+                                <div className="flex items-center gap-2.5">
+                                  <svg className="h-4 w-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                  </svg>
+                                  <span className="text-[11px] leading-relaxed text-slate-200">
+                                    Set as your <strong className="text-emerald-300">Active Main Workout Plan</strong>. It stays permanently saved on your account and appears on your Dashboard every time you log in.
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => navigateToTab("dashboard")}
+                                  className="text-[10px] font-bold text-emerald-300 hover:text-white underline underline-offset-2 ml-2 shrink-0 button-press"
+                                >
+                                  Dashboard →
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="p-3.5 rounded-2xl bg-white/[0.025] border border-cyan-500/25 flex items-center justify-between text-xs text-slate-300 animate-fade-in">
+                                <div className="flex items-center gap-2.5">
+                                  <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse shrink-0 shadow-[0_0_6px_#38bdf8]" />
+                                  <span className="text-[11px] leading-relaxed text-slate-300">
+                                    Tap <strong className="text-cyan-300">"Save as Main Plan"</strong> to follow this routine across your account without generating another one each time you log in.
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveAsMainPlan}
+                                  className="text-[10px] font-bold text-cyan-300 hover:text-white uppercase tracking-wider ml-2 shrink-0 button-press"
+                                >
+                                  Save Now →
+                                </button>
+                              </div>
+                            )}
+
+                            {/* 3 Days Workout Cards */}
                             {plan.map((day, i) => (
                               <button
                                 key={i}
@@ -5797,16 +7887,85 @@ export default function Home() {
                         )}
 
                         {!plan && !loading && !error && (
-                          <div className="liquid-glass flex flex-col items-center justify-center rounded-3xl p-10 text-center">
-                            <div className="liquid-pill flex h-14 w-14 items-center justify-center rounded-2xl text-sky-300 mb-3">
-                              <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12h16.5m-16.5 3.75h16.5M3.75 19.5h16.5M5.625 4.5h12.75a1.875 1.875 0 0 1 0 3.75H5.625a1.875 1.875 0 0 1 0-3.75Z" />
-                              </svg>
+                          <div className="liquid-glass relative overflow-hidden rounded-3xl p-6 border border-white/[0.08] shadow-2xl space-y-4">
+                            {/* Blueprint Header */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className={`h-2 w-2 rounded-full ${isReady ? "bg-emerald-400 animate-pulse" : "bg-cyan-400"}`} />
+                                <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-cyan-300">
+                                  Synthesis Architecture
+                                </span>
+                              </div>
+                              <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full border ${
+                                isReady
+                                  ? "bg-emerald-500/15 border-emerald-400/30 text-emerald-300"
+                                  : "bg-white/[0.04] border-white/[0.08] text-slate-400"
+                              }`}>
+                                {isReady ? "Ready to Build" : "Awaiting Setup"}
+                              </span>
                             </div>
-                            <h3 className="text-sm font-bold text-white">Generated Plan Area</h3>
-                            <p className="mt-1 max-w-xs text-xs text-slate-400">
-                              Configure your target parameters on the left to synthesize an adaptive 3-day schedule.
+
+                            <p className="text-xs text-slate-400 leading-relaxed">
+                              Select your training goals on the left. The Groq LLM engine adapts exercise selection, set volume, and rest intervals into a balanced 3-day split.
                             </p>
+
+                            {/* 3-Day Split Blueprint Preview */}
+                            <div className="space-y-2">
+                              {(splitFormat.includes("Upper")
+                                ? [
+                                    { num: "01", title: "Day 1: Upper Body Power", focus: "Chest, back, deltoids & arm stabilizers", dur: "45-50m", badgeBg: "bg-cyan-500/10 text-cyan-400" },
+                                    { num: "02", title: "Day 2: Lower Body Strength", focus: "Quads, posterior chain & core stabilization", dur: "45-50m", badgeBg: "bg-sky-500/10 text-sky-400" },
+                                    { num: "03", title: "Day 3: Full Body & Core", focus: "Kinetic chains, balance & volume overload", dur: "40-45m", badgeBg: "bg-teal-500/10 text-teal-400" },
+                                  ]
+                                : splitFormat.includes("Full Body")
+                                ? [
+                                    { num: "01", title: "Day 1: Full Body A (Squat focus)", focus: "Squats, bench press, rows & core bracing", dur: "45-50m", badgeBg: "bg-cyan-500/10 text-cyan-400" },
+                                    { num: "02", title: "Day 2: Full Body B (Hinge focus)", focus: "Deadlifts, overhead press, chins & abs", dur: "45-50m", badgeBg: "bg-sky-500/10 text-sky-400" },
+                                    { num: "03", title: "Day 3: Full Body C (Volume)", focus: "Lunges, dips, pulldowns & accessories", dur: "40-45m", badgeBg: "bg-teal-500/10 text-teal-400" },
+                                  ]
+                                : splitFormat.includes("Arnold") || splitFormat.includes("Custom")
+                                ? [
+                                    { num: "01", title: "Day 1: Chest & Back (Antagonists)", focus: "Superset horizontal pushes & pulls", dur: "45-50m", badgeBg: "bg-cyan-500/10 text-cyan-400" },
+                                    { num: "02", title: "Day 2: Shoulders & Arms", focus: "Deltoid heads, biceps & triceps hypertrophy", dur: "45-50m", badgeBg: "bg-sky-500/10 text-sky-400" },
+                                    { num: "03", title: "Day 3: Legs & Core", focus: "Quads, hamstrings, calves & abs overload", dur: "40-45m", badgeBg: "bg-teal-500/10 text-teal-400" },
+                                  ]
+                                : [
+                                    { num: "01", title: "Day 1: Push (Chest, Shoulders, Triceps)", focus: "Bench press, overhead presses, dips & extensions", dur: "45-50m", badgeBg: "bg-cyan-500/10 text-cyan-400" },
+                                    { num: "02", title: "Day 2: Pull (Back, Biceps, Rear Delts)", focus: "Deadlifts, rows, lat pulldowns & curls", dur: "45-50m", badgeBg: "bg-sky-500/10 text-sky-400" },
+                                    { num: "03", title: "Day 3: Legs & Core (Quads, Posterior, Abs)", focus: "Squats, lunges, romanian deadlifts & planks", dur: "45-50m", badgeBg: "bg-teal-500/10 text-teal-400" },
+                                  ]
+                              ).map((step) => (
+                                <div key={step.num} className="p-3 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className={`flex h-7 w-7 items-center justify-center rounded-xl text-xs font-bold font-mono ${step.badgeBg}`}>
+                                      {step.num}
+                                    </span>
+                                    <div>
+                                      <p className="text-xs font-bold text-white">{step.title}</p>
+                                      <p className="text-[10px] text-slate-400">{step.focus}</p>
+                                    </div>
+                                  </div>
+                                  <span className="text-[10px] font-mono text-slate-500">{step.dur}</span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Live Configuration Pill Strip */}
+                            <div className="pt-2 border-t border-white/[0.06] flex flex-wrap items-center gap-2 text-[10px]">
+                              <span className="text-slate-500 uppercase tracking-wider font-semibold">Live Setup:</span>
+                              <span className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-slate-300 font-medium">
+                                Goal: <strong className="text-white font-bold">{goal || "—"}</strong>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-slate-300 font-medium">
+                                Level: <strong className="text-white font-bold">{experience || "—"}</strong>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-slate-300 font-medium">
+                                Split: <strong className="text-cyan-300 font-bold">{splitFormat.includes("PPL") ? "PPL" : splitFormat.split(" ")[0]}</strong>
+                              </span>
+                              <span className="px-2 py-0.5 rounded-lg bg-white/[0.04] text-slate-300 font-medium">
+                                Gear: <strong className="text-cyan-300 font-bold">{equipment ? `${equipment.split(",").filter(Boolean).length} tools` : "—"}</strong>
+                              </span>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -6222,6 +8381,15 @@ export default function Home() {
                     onStartHistoryWorkout={startFromHistoryWorkout}
                   />
                 )}
+
+                {/* ─── TAB 7: TROPHY ROOM & PROFILE ─── */}
+                {tab === "trophy" && (
+                  <TrophyRoomTab
+                    onQuickStart={quickStart}
+                    preferredUnit={preferredUnit}
+                    onSetUnit={setPreferredUnit}
+                  />
+                )}
               </>
             )}
 
@@ -6237,6 +8405,8 @@ export default function Home() {
                   elapsedSeconds={elapsedSeconds}
                   unit={preferredUnit}
                   onSetUnit={setPreferredUnit}
+                  onSetCompleted={onSetCompleted}
+                  comboCounter={comboCounter}
                 />
               </div>
             )}
@@ -6286,7 +8456,12 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                   </svg>
                 )},
-              ].map((tabItem) => {
+                { key: "trophy" as HomeTab, label: "Trophy", icon: (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.504-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.004 0H9.496m5.004 0a5.25 5.25 0 0 0 5.25-5.25v-1.5h-15.5v1.5a5.25 5.25 0 0 0 5.25 5.25m10.25-5.25H21a2.25 2.25 0 0 0 2.25-2.25v-.75a2.25 2.25 0 0 0-2.25-2.25h-1.5M4.5 9H3a2.25 2.25 0 0 0-2.25 2.25v.75A2.25 2.25 0 0 0 3 14.25h1.5" />
+                  </svg>
+                )},
+              ].map((tabItem: any) => {
                 const active = tab === tabItem.key;
                 if (tabItem.isCenter) {
                   return (
@@ -6308,7 +8483,13 @@ export default function Home() {
                   <button
                     key={tabItem.key}
                     type="button"
-                    onClick={() => navigateToTab(tabItem.key)}
+                    onClick={() => {
+                      if (tabItem.href) {
+                        router.push(tabItem.href);
+                      } else {
+                        navigateToTab(tabItem.key);
+                      }
+                    }}
                     className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all button-press ${
                       active ? "text-cyan-300" : "text-slate-400 hover:text-slate-200"
                     }`}
@@ -6347,6 +8528,8 @@ export default function Home() {
           elapsedSeconds={elapsedSeconds}
           unit={preferredUnit}
           onClose={resetHome}
+          gamificationResult={gamificationResult}
+          gamificationStats={gamificationStats}
         />
       )}
 
@@ -6374,17 +8557,28 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setIsCoachDrawerOpen(true)}
-            className="liquid-glass group relative flex items-center gap-2.5 rounded-full border border-cyan-400/40 bg-gradient-to-r from-sky-950/90 via-[#061836]/95 to-cyan-950/90 px-3.5 py-2.5 sm:px-4 sm:py-3 text-white shadow-[0_0_20px_rgba(0,168,232,0.35)] transition-all duration-300 hover:scale-105 hover:border-cyan-300 hover:shadow-[0_0_30px_rgba(56,189,248,0.55)] button-press backdrop-blur-xl"
-            title="Ask Coach Fostura (AI Coach)"
+            className="group relative flex items-center gap-3 rounded-2xl border border-cyan-500/50 bg-slate-900/95 hover:border-cyan-400 hover:bg-slate-800/95 px-3.5 py-2 sm:px-4 sm:py-2.5 text-white transition-all duration-200 button-press shadow-2xl backdrop-blur-md"
+            title="Ask AI Coach (Coach Fostura)"
           >
-            <span className="relative flex h-2.5 w-2.5 shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-500 shadow-[0_0_8px_#38bdf8]" />
-            </span>
-            <span className="text-sm sm:text-base">✨</span>
-            <span className="hidden text-xs font-black tracking-wide bg-gradient-to-r from-white via-sky-100 to-cyan-300 bg-clip-text text-transparent sm:inline">
-              Ask Coach Fostura
-            </span>
+            {/* Clean AI Badge (No glowing halos, no lucide sparkles) */}
+            <div className="flex h-8 w-8 sm:h-8.5 sm:w-8.5 items-center justify-center rounded-xl bg-cyan-400 text-slate-950 font-black text-xs shrink-0 transition-transform group-hover:scale-105">
+              <span>AI</span>
+            </div>
+
+            {/* Engaging Callout */}
+            <div className="flex flex-col text-left pr-0.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-white group-hover:text-cyan-300 transition-colors">
+                  Ask AI Coach
+                </span>
+                <span className="text-[11px] text-cyan-400 font-bold transition-transform group-hover:translate-x-0.5">
+                  →
+                </span>
+              </div>
+              <span className="text-[10px] text-slate-400 font-medium">
+                Form cues, meals & routines
+              </span>
+            </div>
           </button>
         </div>
       )}
@@ -6395,6 +8589,10 @@ export default function Home() {
         onClose={() => setIsCoachDrawerOpen(false)}
         unit={preferredUnit}
       />
+
+      {/* ══════════════ GAMIFICATION OVERLAYS ══════════════ */}
+      <XPToastOverlay toasts={xpToasts} />
+      <ConfettiOverlay active={showConfetti} />
     </>
   );
 }

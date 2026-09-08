@@ -106,6 +106,16 @@ export default function HistoryPage() {
             </svg>
             <span>Back to Dashboard</span>
           </Link>
+
+          <Link
+            href="/profile"
+            className="liquid-pill flex items-center gap-1.5 px-3 py-1.5 rounded-xl border-amber-400/30 bg-amber-500/10 text-xs font-bold text-amber-300 hover:text-white transition-all button-press"
+          >
+            <svg className="h-3.5 w-3.5 text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 0 1 3 3h-15a3 3 0 0 1 3-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.003 0H9.497m5.003 0A4.5 4.5 0 0 0 18 9.75V4.5H6v5.25a4.5 4.5 0 0 0 3.497 4.5m4.006 0A2.25 2.25 0 0 1 12 16.5a2.25 2.25 0 0 1-1.5-.75" />
+            </svg>
+            <span>Trophy Room</span>
+          </Link>
         </div>
 
         <div className="flex items-center gap-3">
@@ -271,13 +281,16 @@ export default function HistoryPage() {
                         <div className="flex items-center justify-between sm:justify-end gap-3 flex-wrap">
                           <div className="flex items-center gap-2">
                             <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-slate-300 rounded-lg">
-                              ⏱ {formatDuration(w.duration_seconds)}
+                              {formatDuration(w.duration_seconds)}
                             </span>
                             <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-teal-300 rounded-lg">
-                              ✓ {w.completed_sets}/{w.total_sets} sets
+                              {w.completed_sets}/{w.total_sets} sets
                             </span>
                             <span className="liquid-pill px-2.5 py-1 text-xs font-bold text-amber-300 rounded-lg">
-                              🔥 {w.calories} kcal
+                              {w.calories} kcal
+                            </span>
+                            <span className="liquid-pill px-2.5 py-1 text-xs font-black text-amber-300 bg-amber-500/15 border border-amber-400/30 rounded-lg">
+                              +{100 + (w.completed_sets || 0) * 10} XP
                             </span>
                           </div>
 
@@ -363,7 +376,7 @@ export default function HistoryPage() {
                                         {s.weight ? `${s.weight} ${w.unit}` : "Bodyweight"} × {s.actualReps || s.targetReps} reps
                                       </span>
                                       <span className={s.completed ? "text-emerald-400 font-bold" : "text-slate-500"}>
-                                        {s.completed ? "✓ Done" : "—"}
+                                        {s.completed ? "Done" : "—"}
                                       </span>
                                     </div>
                                   ))}

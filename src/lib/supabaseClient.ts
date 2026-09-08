@@ -3,8 +3,25 @@ import { createClient } from "@supabase/supabase-js";
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+/**
+ * Returns true if valid Supabase environment variables are provided
+ */
+export const isSupabaseConfigured = Boolean(
+  supabaseUrl &&
+  supabaseAnonKey &&
+  supabaseUrl.startsWith("http") &&
+  !supabaseUrl.includes("placeholder")
+);
 
+// Fallback to placeholder to prevent Next.js build-time errors when env vars are absent
+export const supabase = createClient(
+  isSupabaseConfigured ? supabaseUrl : "https://placeholder-project.supabase.co",
+  isSupabaseConfigured ? supabaseAnonKey : "placeholder-anon-key"
+);
+
+/* ═══════════════════════════════════════════════════════════════
+   Types Matching Supabase Schema
+   ═══════════════════════════════════════════════════════════════ */
 export interface SupabaseWorkout {
   id?: string;
   user_id: string;
@@ -25,9 +42,51 @@ export interface SupabaseWorkout {
   calories: number;
   unit: "lbs" | "kg";
   created_at?: string;
+  updated_at?: string;
 }
 
+export interface SupabaseTemplate {
+  id?: string;
+  user_id: string;
+  name: string;
+  category: string;
+  exercises: {
+    name: string;
+    sets: number;
+    reps: string;
+  }[];
+  is_example?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SupabaseMetric {
+  id?: string;
+  user_id: string;
+  date: string;
+  weight: number;
+  body_fat: number;
+  calories: number;
+  unit?: "lbs" | "kg";
+  created_at?: string;
+}
+
+export interface SupabaseProfile {
+  user_id: string;
+  preferred_unit: "lbs" | "kg";
+  fitness_goal?: string;
+  experience_level?: string;
+  equipment?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Local Storage Fallbacks (Offline & Resiliency Support)
+   ═══════════════════════════════════════════════════════════════ */
 const LOCAL_STORAGE_KEY = "forma_saved_workouts_v1";
+const TEMPLATES_KEY = "forma-templates";
+const METRICS_KEY = "forma-metrics";
 
 function getLocalWorkouts(userId?: string): SupabaseWorkout[] {
   if (typeof window === "undefined") return [];
@@ -72,6 +131,10 @@ function deleteLocalWorkout(workoutId: string): void {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   Workouts Operations
+   ═══════════════════════════════════════════════════════════════ */
+
 /**
  * Save completed workout record to Supabase (with automatic local fallback)
  */
@@ -82,26 +145,38 @@ export async function saveWorkoutToSupabase(
   const localSaved = saveLocalWorkout(workout);
 
   try {
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!isSupabaseConfigured) {
       return { data: localSaved, isCloud: false, error: null };
+    }
+
+    // Strip temporary local ID so Postgres generates a true UUID
+    const payload: Partial<SupabaseWorkout> = { ...workout };
+    if (payload.id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id)) {
+      delete payload.id;
     }
 
     const { data, error } = await supabase
       .from("workouts")
-      .insert([workout])
+      .insert([payload])
       .select()
       .single();
 
     if (error) {
-      // Table might not be created yet in Supabase (PGRST205) or RLS policy needed
       console.warn(
-        "Supabase note: Workout saved locally on device. To enable cloud database sync, create the 'workouts' table in your Supabase SQL Editor (see supabase_schema.sql).",
+        "Supabase note: Workout preserved locally. To sync with cloud database, run supabase_schema.sql in your Supabase SQL Editor.",
         error.message || error
       );
       return { data: localSaved, isCloud: false, error: null };
     }
 
-    return { data: data || localSaved, isCloud: true, error: null };
+    if (data) {
+      // Replace temporary local fallback with the confirmed cloud record to prevent duplicate entries
+      deleteLocalWorkout(localSaved.id!);
+      saveLocalWorkout(data);
+      return { data, isCloud: true, error: null };
+    }
+
+    return { data: localSaved, isCloud: true, error: null };
   } catch (err: any) {
     console.warn(
       "Supabase sync notice: Workout preserved locally. Cloud sync pending table setup.",
@@ -120,7 +195,7 @@ export async function getUserWorkoutsFromSupabase(
   const localWorkouts = getLocalWorkouts(userId);
 
   try {
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!isSupabaseConfigured) {
       return { data: localWorkouts, isCloud: false, error: null };
     }
 
@@ -135,7 +210,7 @@ export async function getUserWorkoutsFromSupabase(
       return { data: localWorkouts, isCloud: false, error: null };
     }
 
-    // Merge cloud and local if any local exist
+    // Merge cloud and local if any offline records exist
     const cloudIds = new Set((data || []).map((w: SupabaseWorkout) => w.id));
     const merged = [...(data || []), ...localWorkouts.filter((w) => !cloudIds.has(w.id))];
     merged.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
@@ -156,7 +231,7 @@ export async function deleteWorkoutFromSupabase(
   deleteLocalWorkout(workoutId);
 
   try {
-    if (!supabaseUrl || !supabaseAnonKey) {
+    if (!isSupabaseConfigured) {
       return { success: true, error: null };
     }
 
@@ -172,5 +247,127 @@ export async function deleteWorkoutFromSupabase(
     return { success: true, error: null };
   } catch (err: any) {
     return { success: true, error: null };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Workout Templates Operations
+   ═══════════════════════════════════════════════════════════════ */
+
+export async function getUserTemplatesFromSupabase(
+  userId: string
+): Promise<{ data: SupabaseTemplate[]; isCloud: boolean }> {
+  let localTemplates: SupabaseTemplate[] = [];
+  if (typeof window !== "undefined") {
+    try {
+      localTemplates = JSON.parse(localStorage.getItem(TEMPLATES_KEY) || "[]");
+    } catch {}
+  }
+
+  if (!isSupabaseConfigured) {
+    return { data: localTemplates, isCloud: false };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("workout_templates")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
+
+    if (error || !data) {
+      return { data: localTemplates, isCloud: false };
+    }
+
+    return { data, isCloud: true };
+  } catch {
+    return { data: localTemplates, isCloud: false };
+  }
+}
+
+export async function saveTemplateToSupabase(
+  template: SupabaseTemplate
+): Promise<{ data: SupabaseTemplate | null; isCloud: boolean }> {
+  if (!isSupabaseConfigured) {
+    return { data: template, isCloud: false };
+  }
+
+  try {
+    const payload: Partial<SupabaseTemplate> = { ...template };
+    if (payload.id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id)) {
+      delete payload.id;
+    }
+
+    const { data, error } = await supabase
+      .from("workout_templates")
+      .upsert([payload])
+      .select()
+      .single();
+
+    if (error) return { data: template, isCloud: false };
+    return { data, isCloud: true };
+  } catch {
+    return { data: template, isCloud: false };
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   User Metrics Operations
+   ═══════════════════════════════════════════════════════════════ */
+
+export async function getUserMetricsFromSupabase(
+  userId: string
+): Promise<{ data: SupabaseMetric[]; isCloud: boolean }> {
+  let localMetrics: SupabaseMetric[] = [];
+  if (typeof window !== "undefined") {
+    try {
+      localMetrics = JSON.parse(localStorage.getItem(METRICS_KEY) || "[]");
+    } catch {}
+  }
+
+  if (!isSupabaseConfigured) {
+    return { data: localMetrics, isCloud: false };
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("user_metrics")
+      .select("*")
+      .eq("user_id", userId)
+      .order("date", { ascending: true });
+
+    if (error || !data) {
+      return { data: localMetrics, isCloud: false };
+    }
+
+    return { data, isCloud: true };
+  } catch {
+    return { data: localMetrics, isCloud: false };
+  }
+}
+
+export async function saveMetricToSupabase(
+  metric: SupabaseMetric
+): Promise<{ data: SupabaseMetric | null; isCloud: boolean }> {
+  if (!isSupabaseConfigured) {
+    return { data: metric, isCloud: false };
+  }
+
+  try {
+    const payload: Partial<SupabaseMetric> = { ...metric };
+    if (payload.id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.id)) {
+      delete payload.id;
+    }
+
+    const { data, error } = await supabase
+      .from("user_metrics")
+      .insert([payload])
+      .select()
+      .single();
+
+    if (error) return { data: metric, isCloud: false };
+    return { data, isCloud: true };
+  } catch {
+    return { data: metric, isCloud: false };
   }
 }
